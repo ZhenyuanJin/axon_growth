@@ -75,8 +75,10 @@ import pointpats
 
 
 # 自定义库
-sys.path.append(r'/data/zyjin/common_func/')
-import common_functions as cf
+# sys.path.append(r'/data/zyjin/common_func/')
+# import common_functions as cf
+sys.path.append(r'/data/zyjin/')
+import common_func.common_functions as cf
 # endregion
 
 
@@ -179,7 +181,19 @@ def generate_angle_matrix(animal, dataset_key, dim='2D'):
     '''
     生成
     '''
-    pass
+    animal_info = AnimalInfo(animal, dataset_key)
+    if dim == '2D':
+        area_center_dict = animal_info.area_center_dict
+        full_split_name = animal_info.full_split_name
+        split_angle_matrix = cf.get_zero_df(full_split_name, full_split_name)
+        for i, center_i in area_center_dict.items():
+            for j, center_j in area_center_dict.items():
+                split_angle_matrix.loc[i, j] = cf.get_angle(center_i, center_j)
+        angle_matrix = convert_split_df_to_normal(split_angle_matrix, animal, dataset_key, method='mean')
+        cf.save_pkl(angle_matrix, animal_info.angle_matrix_dir + 'angle_matrix_2D')
+    else:
+        raise NotImplementedError
+    return angle_matrix
 
 
 def generate_distance_matrix(animal, dataset_key, dim='2D'):
@@ -217,10 +231,11 @@ class AnimalDir:
         self.area_coords_dir = self.data_dir + 'area_coords/'
         self.whole_cortex_coords_dir = self.data_dir + 'whole_cortex_coords/'
         self.distance_matrix_dir = self.data_dir + 'distance_matrix/'
+        self.angle_matrix_dir = self.data_dir + 'angle_matrix/'
+        self.SC_dir = self.data_dir + 'SC/'
 
         # 结果目录
         self.axon_source_target_dir = 'pass'
-
 
 
 class AnimalInfo(AnimalDir):
@@ -230,7 +245,7 @@ class AnimalInfo(AnimalDir):
         '''
         super().__init__(animal, dataset_key)
 
-        SC_type_dict = {'mouse_gamanut': 'FLN', 'marmoset_majka': 'FLN', 'marmoset_V4': 'FLN', 'macaque_markov29': 'FLN', 'macaque_markov40': 'FLN', 'human_lariviere': 'Dmri'}
+        SC_type_dict = {'mouse_gamanut': 'FLNe', 'marmoset_majka': 'FLNe', 'marmoset_V4': 'FLNe', 'macaque_markov29': 'FLNe', 'macaque_markov40': 'FLNe', 'human_lariviere': 'Dmri'}
         self.SC_type = SC_type_dict[self.animal_and_dataset_key]
 
         name_information = get_names(self.animal, self.dataset_key)
@@ -297,19 +312,32 @@ class AnimalInfo(AnimalDir):
 
     @property
     def angle_2D(self):
-        pass
+        try:
+            return load_angle_matrix(self.animal, self.dataset_key, dim='2D')
+        except:
+            return generate_angle_matrix(self.animal, self.dataset_key, dim='2D')
 
     @property
     def angle_3D(self):
-        pass
+        raise NotImplementedError
+        azim_matrix = 0
+        elev_matrix = 0
+        angle_3D_dict = {'azim_matrix': azim_matrix, 'elev_matrix': elev_matrix}
+        return angle_3D_dict
 
     @property
     def distance_2D(self):
-        pass
+        try:
+            return load_distance_matrix(self.animal, self.dataset_key, dim='2D')
+        except:
+            return generate_distance_matrix(self.animal, self.dataset_key, dim='2D')
 
     @property
     def distance_3D(self):
-        pass
+        try:
+            return load_distance_matrix(self.animal, self.dataset_key, dim='3D')
+        except:
+            return generate_distance_matrix(self.animal, self.dataset_key, dim='3D')
 
     @property
     def neuron_density(self):
@@ -358,9 +386,12 @@ class AnimalInfo(AnimalDir):
         '''
         读取SC数据
         '''
-        pass
+        if self.animal_and_dataset_key in ['marmoset_majka', 'macaque_markov40']:
+            SC = load_SC(self.SC_dir + 'SC_data')
+        # 确保SC按照指定的顺序排列
+        SC = cf.reorder_df(SC, new_row=self.full_name, new_col=self.full_name)
+        return SC
         
-
 
 def load_coords_dict(animal, dataset_key):
     '''
@@ -409,13 +440,31 @@ def load_name_location_dict(animal, dataset_key):
     animal_dir = AnimalDir(animal, dataset_key)
     return cf.load_pkl(animal_dir.area_coords_dir + 'name_location_dict')
 
-
+@cf.message_decorator('pre process SC is not implemented')
 def load_SC(filename):
     '''
     读取SC的基本数据
     '''
     SC = cf.load_df(filename)
     return SC
+
+
+def load_angle_matrix(animal, dataset_key, dim='2D'):
+    '''
+    读取angle_matrix数据
+    '''
+    animal_dir = AnimalDir(animal, dataset_key)
+    if dim == '2D':
+        return cf.load_pkl(animal_dir.angle_matrix_dir + 'angle_matrix')
+
+
+def load_distance_matrix(animal, dataset_key, dim='2D'):
+    '''
+    读取distance_matrix数据
+    '''
+    animal_dir = AnimalDir(animal, dataset_key)
+    return cf.load_pkl(animal_dir.distance_matrix_dir + 'distance_matrix_' + dim)
+
 
 @cf.to_be_improved
 def load_neuron_density(animal, dataset_key):
@@ -456,20 +505,23 @@ def get_names(animal, dataset_key):
 
     if animal_and_dataset_key == 'macaque_markov40':
         target_name = ['V1', 'V2', 'V4', 'TEO', '946d', 'F5', '8m', '7A', 'DP', '2', '5', '7B', 'STPr', 'STPi', 'STPc', 'PBr', 'Tepd', '24c', 'F1', 'F2', 'F7', 'ProM', '8l', '946v', '46d', '8B', '10', 'MT', '7m', '9', '25', 'F3', 'F4', '32', 'LIP', 'OPRO', '3', '1', '45A', 'V6']
-        coords_target_name = target_name
         source_name = ['10', '11', '12', '13', '14', '1', '23', '24a', '24b', '24c', '24d', '25', '2930', '2', '31', '32', '3', '44', '45A', '45B', '46d', '46v', '5', '7A', '7B', '7m', '7op', '8B', '8l', '8m', '8r', '946d', '946v', '9', 'AIP', 'CORE', 'DP', 'ENTORHINAL', 'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'FST', 'Gu', 'INSULA', 'IPa', 'LB', 'LIP', 'MB', 'MIP', 'MST', 'MT', 'OPAI', 'OPRO', 'PBc', 'PBr', 'PERIRHINAL', 'PGa', 'PIP', 'PIRIFORM', 'Pi', 'Pro.St.', 'ProM', 'SII', 'STPc', 'STPi', 'STPr', 'SUBICULUM', 'TEMPORAL_POLE', 'TEO', 'TEOm', 'TEad', 'TEama', 'TEamp', 'TEav', 'TEpv', 'THTF', 'TPt', 'Tepd', 'V1', 'V2', 'V3A', 'V3', 'V4', 'V4t', 'V6A', 'V6', 'VIP']
-        accurate_name_dict = {}
-        for name in all_name_coords:
-            if name in ['11--1', '11--2']:
-                accurate_name_dict[name] = '11'
-            else:
-                accurate_name_dict[name] = name
-        name2namelist_dict = {}
-        for name in source_name:
+        full_name = cf.union_list(target_name, source_name)
+        name_to_split_name_dict = {}
+        for name in full_name:
             if name in ['11']:
-                name2namelist_dict[name] = ['11--1', '11--2']
+                name_to_split_name_dict[name] = ['11--1', '11--2']
             else:
-                name2namelist_dict[name] = [name]
+                name_to_split_name_dict[name] = [name]
+        full_split_name = []
+        for name, name_to_split_name in name_to_split_name_dict.items():
+            full_split_name.extend(name_to_split_name)
+        split_name_to_name_dict = {}
+        for name in full_split_name:
+            if name in ['11--1', '11--2']:
+                split_name_to_name_dict[name] = '11'
+            else:
+                split_name_to_name_dict[name] = name
 
     if animal_and_dataset_key == 'marmoset_majka':
         target_name = ['A1-2', 'A10', 'A11', 'A19DI', 'A19M', 'A23a', 'A23b', 'A23c', 'A24d', 'A32', 'A32V', 'A3a', 'A3b', 'A45', 'A46D', 'A47L', 'A4ab', 'A4c', 'A6DC', 'A6DR', 'A6M', 'A6Va', 'A8C', 'A8aD', 'A8aV', 'A8b', 'A9', 'AIP', 'AuA1', 'AuCM', 'AuCPB', 'AuML', 'AuRT', 'LIP', 'MIP', 'MST', 'OPt', 'PE', 'PEC', 'PF', 'PFG', 'PG', 'PGM', 'PGa-IPa', 'S2E', 'TE3', 'TEO', 'TPO', 'V1', 'V2', 'V3A', 'V4', 'V4T', 'V5', 'V6']
@@ -507,7 +559,6 @@ def get_names(animal, dataset_key):
                 name_to_split_name_dict[name] = ['TH--1', 'TH--2']
             if name in ['V2']:
                 name_to_split_name_dict[name] = ['V2--1', 'V2--2']
-        # full_split_name = cf.union_list(*name_to_split_name_dict.values())
         full_split_name = []
         for name, name_to_split_name in name_to_split_name_dict.items():
             full_split_name.extend(name_to_split_name)
@@ -704,7 +755,7 @@ def load_SC_model_dict(outcomedir):
     '''
     读取SC模型的参数
     '''
-    SC_model_dict = cf.load_dict_separate(outcomedir+'/SC_model_dict/SC_model_dict')
+    SC_model_dict = cf.load_dict_separate(outcomedir+'/SC_model/SC_model_dict')
     return SC_model_dict
 # endregion
 
@@ -794,13 +845,12 @@ def point_in_which_area(points, polygon_dict, whole_cortex_polygon):
     '''
     indices = []
     for s in points:
+        idx = 'out_of_areas'
         if whether_in_area(s, whole_cortex_polygon):
             for name in polygon_dict.keys():
                 if whether_in_area(s, polygon_dict[name]):
                     idx = name
                     break
-        else:
-            idx = 'out_of_areas'
         indices.append(idx)
     return indices
 
@@ -942,10 +992,12 @@ def generate_SC_from_axon_source_target(animal, dataset_key, outcomes_dir=None, 
     Get the model SC and Data SC.
 
     note:
-        CCM: connection count matrix
+        CCMe: connection count matrix
         CCMsym: symmetry connection count matrix
         CCMt: connection count matrix with self connection
         split_CCM: connection count matrix with split area name
+        FLNe: fraction of labeled neuron
+        FLNt: FLN with self connection
     '''
     if indices_ss is None or indices_tt is None:
         axon_source_target, axon_source_target_exist = load_axon_source_target(outcomes_dir)
@@ -970,25 +1022,50 @@ def generate_SC_from_axon_source_target(animal, dataset_key, outcomes_dir=None, 
     CCMt_model = convert_split_df_to_normal(split_CCMt_model, animal, dataset_key, method='sum')
     
     # 去掉对角线
-    CCM_model = cf.replace_df_diagonal(CCMt_model, replace_value=np.nan)
+    CCMe_model = cf.replace_df_diagonal(CCMt_model, replace_value=np.nan)
 
     # 生成对称的CCM
-    CCMsym_model = pd.DataFrame((CCM_model.values+CCM_model.values.T)/2, index=CCM_model.index, columns=CCM_model.columns)
+    CCMe_sym_model = pd.DataFrame((CCMe_model.values+CCMe_model.values.T)/2, index=CCMe_model.index, columns=CCMe_model.columns)
 
     # 整合
-    SC_model_dict = {'CCM': CCM_model, 'CCMsym': CCMsym_model, 'CCMt': CCMt_model, 'split_CCMt': split_CCMt_model}
+    SC_model_dict = {'CCMe': CCMe_model, 'CCMe_sym': CCMe_sym_model, 'CCMt': CCMt_model}
 
     # 生成normalized SC和log SC
+    new_entries = {}
     for k, v in SC_model_dict.items():
-        SC_model_dict[k+'_normalized'] = normalize_SC(v, animal, dataset_key)
-        SC_model_dict[k+'_normalized_log'] = log_SC(SC_model_dict[k+'_normalized'])
+        normalized = normalize_SC(v, animal, dataset_key)
+        new_entries[f"{k}_normalized"] = normalized
+        new_entries[f"{k}_normalized_log"] = log_SC(normalized, animal, dataset_key)
 
+    # 合并到原字典
+    SC_model_dict.update(new_entries)
+
+    # 生成FLN
+    SC_model_dict['FLNe'] = CCM_to_FLN(CCMe_model)
+    SC_model_dict['FLNt'] = CCM_to_FLN(CCMt_model)
+    
+    # 保存
     cf.save_dict_separate(SC_model_dict, outcomes_dir+'/SC_model/SC_model_dict')
     return SC_model_dict
 
 
+def SC_type_to_SC_dict_key(SC_type):
+    '''
+    将数据的SC_type转换为SC_dict的key
+    '''
+    SC_dict_key = SC_type
+    if SC_type == 'Dmri':
+        SC_dict_key = 'CCMe_sym_normalized'
+    if SC_type == 'FLNe':
+        SC_dict_key = 'FLNe'
+    return SC_dict_key
+
+
 class AxonGrowthModel:
-    def __init__(self, basedir, animal, dataset_key, direction_method, length_method, direction_params, length_params, na, model_type='send', use_neuron_density_to_generate=False, try_load_previous_results=True, process_num=1, use_part_index_as_seed=True, max_iteration=10):
+    def __init__(self):
+        self.value_dir_key = ['animal_and_dataset_key']
+
+    def set_params(self, basedir, animal, dataset_key, direction_method, length_method, direction_params, length_params, na, model_type='send', use_neuron_density_to_generate=False, try_load_previous_results=True, process_num=1, use_part_index_as_seed=True, max_iteration=10):
         '''
         basedir: str, 基础的目录
         animal: str, 动物的名称
@@ -1016,15 +1093,14 @@ class AxonGrowthModel:
         self.use_part_index_as_seed = use_part_index_as_seed
         self.max_iteration = max_iteration
 
-        self.value_dir_key = ['animal_and_dataset_key']
         self.search_params()
 
-        animal_info = AnimalInfo(animal, dataset_key)
+        self.animal_info = AnimalInfo(animal, dataset_key)
 
         if use_neuron_density_to_generate:
-            self.point_density = animal_info.neuron_density.copy()
+            self.point_density = self.animal_info.neuron_density.copy()
         else:
-            self.point_density = cf.create_dict(animal_info.full_name, default_value=1)
+            self.point_density = cf.create_dict(self.animal_info.full_name, default_value=1)
 
     @property
     def outcomes_dir(self):
@@ -1096,11 +1172,28 @@ class AxonGrowthModel:
         获取SC_model_dict
         '''
         try:
-            _SC_model_dict, SC_model_dict_exist = load_SC_model_dict(self.outcomes_dir)
-            return _SC_model_dict
+            return load_SC_model_dict(self.outcomes_dir)
         except:
-            _SC_model_dict = generate_SC_from_axon_source_target(self.animal, self.dataset_key, outcomes_dir=self.outcomes_dir, indices_ss=self.axon_dict['indices_ss'], indices_tt=self.axon_dict['indices_tt'])
-            return _SC_model_dict
+            return generate_SC_from_axon_source_target(self.animal, self.dataset_key, outcomes_dir=self.outcomes_dir, indices_ss=self.axon_dict['indices_ss'], indices_tt=self.axon_dict['indices_tt'])
+
+    def get_suitable_SC_model(self):
+        '''
+        获取和数据匹配的SC_model
+        '''
+        SC_dict_key = SC_type_to_SC_dict_key(self.animal_info.SC_type)
+        return self.SC_model_dict[SC_dict_key]
+
+    def get_masked_SC_as_data(self, SC_dict_key):
+        masked_SC = self.SC_model_dict[SC_dict_key].copy()
+        # 将source_name和target_name以外的所有值变为nan
+        for r in masked_SC.index:
+            for c in masked_SC.columns:
+                if r not in self.animal_info.source_name or c not in self.animal_info.target_name:
+                    masked_SC.loc[r, c] = np.nan
+        return masked_SC
+
+    def get_suitable_SC_model_masked_as_data(self):
+        return self.get_masked_SC_as_data(SC_type_to_SC_dict_key(self.animal_info.SC_type))
 
     def RMAE(self):
         pass
@@ -1202,9 +1295,7 @@ class AxonGrowthModel:
                 tt.append(t)
         return tt
 
-
-
-
+    # region useless
     # def part_visualization(self, FLN_list, FLN_titles, file_name, plot_names, sources, targets, plot_type, draw_axon_arrow):
         
     #     print('donot use it')
@@ -1795,8 +1886,19 @@ class AxonGrowthModel:
     # def do_FLN_symmetry(self):
     #     if self.animal in ['mouse', 'marmoset', 'macaque']:
     #         FLN_symmetry(self.animal, self.FLN_data, self.FLN_model, self.basedir)
+    # endregion
 
 
+class AxonGrowthModelLoader(AxonGrowthModel):
+    def __init__(self, animal, dataset_key, timedir):
+        '''
+        设置timedir,可以输入已经运行得到结果的timedir,此时可以直接运行各类analyze的方法
+        '''
+        super().__init__()
+        self.animal = animal
+        self.dataset_key = dataset_key
+        self.timedir = timedir
+        self.animal_info = AnimalInfo(animal, dataset_key)
 # endregion
 
 
@@ -1885,11 +1987,10 @@ def assign_value_to_split_area(split_value_dict, key, value, animal, dataset_key
     return split_value_dict
 
 
-def CCM_to_FLN(CCM, animal, dataset_key):
+def CCM_to_FLN(CCM):
     '''
     将CCM转换为FLN(FLN是指以target正则化所有输入连接的矩阵)
     '''
-    animal_info = AnimalInfo(animal, dataset_key)
     FLN = cf.normalize_df_with_sum(CCM, row_or_col='col')
     return FLN
 
@@ -1910,11 +2011,12 @@ def scale_SC_to_int(SC, minimal_tol=None):
 
     由于SC可能有极小的值,按照此值来scale可能会得到过大的int,但是这些值对于后续分布的影响极小,在快速计算的情况下,可以设定minimal_tol
     '''
-    minimal_value = np.min(SC.values)
+    SC_without_nan = cf.process_nan(SC, nan_policy='fill', fill_value=0.)
+    minimal_value = np.nanmin(SC_without_nan[SC_without_nan > 0].values)
     if minimal_tol is not None:
         if minimal_value < minimal_tol:
             minimal_value = minimal_tol
-    SC_int = (SC / minimal_value).astype(int)
+    SC_int = (SC_without_nan / minimal_value).astype(int)
     return SC_int
 
 
@@ -1980,6 +2082,31 @@ def log_SC(SC, animal, dataset_key, base=10, apply_c=False, apply_w=False):
 
 
 # region analyze
+def data_model_correlation(SC_data, SC_model, animal, dataset_key, diagonal=False):
+    animal_info = AnimalInfo(animal, dataset_key)
+    target_name = animal_info.target_name
+    source_name = animal_info.source_name
+    sub_SC_data = cf.get_sub_df(df=SC_data, row_list=source_name, col_list=target_name)
+    sub_SC_model = cf.get_sub_df(df=SC_model, row_list=source_name, col_list=target_name)
+    corr = cf.get_pd_rectangle_corr(sub_SC_data, sub_SC_model, diagonal=diagonal)
+    return corr
+
+
+def get_rm_longrange_correlation_change(SC_data, SC_model, distance_matrix, animal, dataset_key, point_num=100, rm_mode='data'):
+    max_distance = np.nanmax(distance_matrix.values)
+    corr_list = []
+    for threshold in np.linspace(0, max_distance, point_num):
+        SC_data_threshold = SC_data.copy()
+        SC_model_threshold = SC_model.copy()
+        if rm_mode == 'data' or rm_mode == 'both':
+            SC_data_threshold[distance_matrix > threshold] = 0
+        if rm_mode == 'model' or rm_mode == 'both':
+            SC_model_threshold[distance_matrix > threshold]
+        corr = data_model_correlation(SC_data_threshold, SC_model_threshold, animal, dataset_key, diagonal=False)
+        corr_list.append(corr)
+    return corr_list
+
+
 def angle_distance_independence_test():
     pass
 
@@ -2037,7 +2164,7 @@ def show_area_boundary(ax, animal, dataset_key, show_area_name=False, text_fonts
     cmap = cf.get_cmap([cf.TRANSPARENT])
     show_value_on_flatmap(ax, animal, dataset_key, value_dict=value_dict, show_area_name=show_area_name, text_fontsize=text_fontsize, edgecolor=edgecolor, fill=False, cbar=False, cmap=cmap)
 
-@cf.message_decorator('需要兼容可能的顺行失踪')
+
 def draw_rectangle_for_connection_matrix(ax, animal, dataset_key):
     '''
     在连接矩阵上画出矩形,用于区分实验已知部分和位置部分
@@ -2054,24 +2181,34 @@ def draw_rectangle_for_connection_matrix(ax, animal, dataset_key):
     cf.plt_line(ax, x=[target_num, target_num], y=[0, source_num], color=color, linestyle=linestyle)
     cf.plt_line(ax, x=[0, target_num], y=[source_num, source_num], color=color, linestyle=linestyle)
 
-@cf.message_decorator('需要兼容可能的顺行失踪')
-def draw_mask_for_unmeasured_block(ax, target_name, source_name):
+
+def draw_mask_for_unmeasured_block(ax, animal, dataset_key):
     '''
     在连接矩阵上画出mask,用于区分未测量部分
     '''
+    animal_info = AnimalInfo(animal, dataset_key)
+    target_name = animal_info.target_name
+    source_name = animal_info.source_name
     target_num = len(target_name)
     source_num = len(source_name)
+    color = cf.GRAY
+    cmap = cf.get_cmap([color])
+    unmeasured_matrix = np.zeros((source_num, source_num))
     if target_num < source_num:
-        color = cf.GRAY
-        cmap = cf.get_cmap([color])
-        unmeasured_matrix = np.zeros((source_num, source_num))
         for i in range(source_num):
             if i < target_num:
                 unmeasured_matrix[:, i] = np.nan
             else:
                 unmeasured_matrix[:, i] = 1
-        cf.sns_heatmap(ax, unmeasured_matrix, show_xtick=False, show_ytick=False, cmap=cmap, cbar=False)
         cf.add_text(ax, x=(target_num+source_num)/2, y=source_num/2, text='Unknown', fontsize=cf.LABEL_SIZE, ha='center', va='center', transform='data')
+    if target_num > source_num:
+        for i in range(target_num):
+            if i < source_num:
+                unmeasured_matrix[i, :] = np.nan
+            else:
+                unmeasured_matrix[i, :] = 1
+        cf.add_text(ax, x=target_num/2, y=(target_num+source_num)/2, text='Unknown', fontsize=cf.LABEL_SIZE, ha='center', va='center', transform='data')
+    cf.sns_heatmap(ax, unmeasured_matrix, show_xtick=False, show_ytick=False, cmap=cmap, cbar=False)
 
 
 def visualize_connection_matrix_heatmap(ax_data, ax_model, matrix_data, matrix_model, animal, dataset_key, log_matrix=False, topo=False):
@@ -2085,8 +2222,8 @@ def visualize_connection_matrix_heatmap(ax_data, ax_model, matrix_data, matrix_m
     SC_type = animal_info.SC_type
 
     if log_matrix:
-        c = get_log_c(animal, SC_type)
-        w = get_log_w(animal, SC_type)
+        c = animal_info.c
+        w = animal_info.w
         local_matrix_data = log_SC(SC=matrix_data, animal=animal, SC_type=SC_type, apply_c=False, apply_w=False)
         local_matrix_model = log_SC(SC=matrix_model, animal=animal, SC_type=SC_type, apply_c=False, apply_w=False)
         vmin = w
@@ -2097,7 +2234,7 @@ def visualize_connection_matrix_heatmap(ax_data, ax_model, matrix_data, matrix_m
         local_matrix_data = matrix_data
         local_matrix_model = matrix_model
         vmin = 0.
-        vmax = get_connection_matrix_vmax(animal, SC_type)
+        vmax = animal_info.connection_matrix_vmax
         add_geq = True
 
     if topo:
@@ -2116,33 +2253,17 @@ def visualize_connection_matrix_heatmap(ax_data, ax_model, matrix_data, matrix_m
     cf.sns_heatmap(ax_model, local_matrix_model, show_xtick=False, show_ytick=False, cmap=cmap, vmin=vmin, vmax=vmax, cbar_kwargs=cbar_kwargs)
 
     # 未测量部分
-    draw_mask_for_unmeasured_block(ax_data, target_name, source_name)
+    draw_mask_for_unmeasured_block(ax_data, animal=animal, dataset_key=dataset_key)
     
     # 用框指示已测量部分
-    draw_rectangle_for_connection_matrix(ax_data, target_name, source_name)
-    draw_rectangle_for_connection_matrix(ax_model, target_name, source_name)
+    draw_rectangle_for_connection_matrix(ax_data, animal=animal, dataset_key=dataset_key)
+    draw_rectangle_for_connection_matrix(ax_model, animal=animal, dataset_key=dataset_key)
 
     cf.set_ax(ax_data, title=animal+'\nData', xlabel='Target', ylabel='Source')
     cf.set_ax(ax_model, title='Model', xlabel='Target', ylabel='Source')
 
-    matrix_data_to_compare = cf.get_sub_df(matrix_data, col_list=target_name)
-    matrix_model_to_compare = cf.get_sub_df(matrix_model, col_list=target_name)
-    corr = cf.get_pd_rectangle_corr(matrix_data_to_compare, matrix_model_to_compare, diagonal=False)
+    corr = data_model_correlation(SC_data=matrix_data, SC_model=matrix_model, animal=animal, dataset_key=dataset_key, diagonal=False)
     cf.add_text(ax_model, x=0.5, y=1.25, text='Corr='+str(round(corr, 3)), va='center', ha='center', fontsize=cf.LABEL_SIZE)
-
-@cf.message_decorator('需要兼容可能的顺行失踪')
-def visualizae_multiple_connection_matrix_heatmap(animal_list, model_dir_list, SC_type_list, figname):
-    '''
-    同时画多个动物的连接矩阵
-    '''
-    animal_num = len(animal_list)
-    fig, ax = cf.gfa(ncols=animal_num, nrows=2)
-    for i, animal, model_dir, SC_type in zip(range(animal_num), animal_list, model_dir_list, SC_type_list):
-        SC_data = load_SC_data(animal, SC_type=SC_type, rearrange=True, cluster_name=True)
-        SC_model = load_SC_model(animal, SC_type=SC_type, basedir=model_dir, rearrange=True, cluster_name=True)
-        visualize_connection_matrix_heatmap(ax_data=ax[0][i], ax_model=ax[1][i], matrix_data=SC_data, matrix_model=SC_model, animal=animal, SC_type=SC_type, log_matrix=False, topo=False)
-    cf.add_axes_list_tag_by_order(ax[0, :])
-    cf.save_fig(fig, figname, formats=['pdf', 'png'], bbox_inches='tight')
 
 
 def visualize_distribution_scaled_by_SC(ax, some_property, SC, minimal_tol=None, distribution_type='CDF', distribution_kwargs=None):
@@ -2153,22 +2274,213 @@ def visualize_distribution_scaled_by_SC(ax, some_property, SC, minimal_tol=None,
     repeated_property = cf.repeat_data(some_property, SC_int)
     distribution_kwargs = cf.update_dict({}, distribution_kwargs)
     if distribution_type == 'CDF':
-        cf.plt_cdf(ax, repeated_property, SC_int, **distribution_kwargs)
+        cf.plt_cdf(ax, repeated_property, **distribution_kwargs)
     elif distribution_type == 'hist':
-        cf.plt_hist(ax, repeated_property, SC_int, **distribution_kwargs)
+        cf.plt_hist(ax, repeated_property, **distribution_kwargs)
 
 
-class SingleVisualizer:
+def visualize_data_model_distribution_scaled_by_SC(ax, some_property, SC_data, SC_model, minimal_tol=None, distribution_type='CDF', distribution_kwargs=None):
+    '''
+    可视化模型和数据的分布
+    '''
+    SC_data_int = scale_SC_to_int(SC_data, minimal_tol=minimal_tol)
+    SC_model_int = scale_SC_to_int(SC_model, minimal_tol=minimal_tol)
+    repeated_property_data = cf.repeat_data(some_property, SC_data_int)
+    repeated_property_model = cf.repeat_data(some_property, SC_model_int)
+    distribution_kwargs = cf.update_dict({}, distribution_kwargs)
+    if distribution_type == 'CDF':
+        cf.plt_compare_cdf_ks(ax, data1=repeated_property_data, data2=repeated_property_model, label1='data', label2='model', **distribution_kwargs)
+    elif distribution_type == 'hist':
+        pass
+
+
+def visualize_intrinsic_proportion():
+    pass
+
+# region previous
+# class SingleVisualizer:
+#     '''
+#     进行单个动物的可视化
+#     '''
+#     def __init__(self, animal, dataset_key, model_timedir):
+#         self.animal = animal
+#         self.dataset_key = dataset_key
+#         self.animal_info = AnimalInfo(animal, dataset_key)
+#         self.SC_data = self.animal_info.SC_data
+#         self.model_timedir = model_timedir
+#         self.minimal_tol = 1e-3 # 后续改成高精度
+#         self.bin_num = 20
+
+#         self.axon_growth_model = AxonGrowthModelLoader(animal, dataset_key, model_timedir)
+#         self.SC_model = self.axon_growth_model.get_suitable_SC_model()
+
+#     def connection_on_flatmap(self, ax):
+#         pass
+
+#     def vector_field(self, ax):
+#         pass
+
+#     def model_data_SC(self, ax_model, ax_data):
+#         visualize_connection_matrix_heatmap(ax_data, ax_model, matrix_data=self.SC_data, matrix_model=self.SC_model, animal=self.animal, dataset_key=self.dataset_key, log_matrix=False, topo=False)
+
+#     def area_level_performance(self, ax, performance_metric='correlation'):
+#         pass
+
+#     def distance_distribution(self, ax, data_or_model, dim='2D'):
+#         if dim == '2D':
+#             distance_matrix = self.animal_info.distance_2D
+#         elif dim == '3D':
+#             distance_matrix = self.animal_info.distance_3D
+        
+#         if data_or_model == 'model':
+#             SC = self.SC_model
+#         elif data_or_model == 'data':
+#             SC = self.SC_data
+
+#         visualize_distribution_scaled_by_SC(ax, distance_matrix, SC, minimal_tol=self.minimal_tol, distribution_type='hist', distribution_kwargs=None)
+
+#     def angle_distribution(self, ax, data_or_model, dim='2D'):
+#         if data_or_model == 'model':
+#             SC = self.SC_model
+#         elif data_or_model == 'data':
+#             SC = self.SC_data
+
+#         if dim == '2D':
+#             angle_matrix = self.animal_info.angle_2D
+#             visualize_distribution_scaled_by_SC(ax, angle_matrix, SC, minimal_tol=self.minimal_tol, distribution_type='CDF', distribution_kwargs=None)
+#         elif dim == '3D':
+#             angle_3D_dict = self.animal_info.angle_3D
+#             azim_matrix = angle_3D_dict['azim_matrix']
+#             elev_matrix = angle_3D_dict['elev_matrix']
+
+#     def SC_distance_scatter(self, ax, dim='2D'):
+#         pass
+
+#     def SC_distribution(self, ax, log_transform=True):
+#         pass
+
+#     def retrograde_neuron(self, ax):
+#         pass
+
+#     def rm_long_range_correlation_change(self, ax, rm_mode='data'):
+#         pass
+
+#     def category_long_range_proportion(self, ax):
+#         pass
+
+
+# class MultipleVisualizer:
+#     '''
+#     进行多个动物的可视化
+#     '''
+#     def __init__(self, animal_list, dataset_key_list, model_timedir_list):
+#         self.animal_list = animal_list
+#         self.dataset_key_list = dataset_key_list
+#         self.model_timedir_list = model_timedir_list
+#         self.animal_num = len(self.animal_list)
+#         self.animal_and_dataset_key_list = [cf.cat(animal, dataset_key) for animal, dataset_key in zip(self.animal_list, self.dataset_key_list)]
+
+#     def get_fig_ax(self, nrows, separate=False, **kwargs):
+#         '''
+#         获取fig和ax
+
+#         separate: True,则每个动物一个fig;False,则所有动物一个fig,但是每个动物一个subfig
+#         '''
+#         self.nrows = nrows
+#         self.separate = separate
+#         self.subfig_dict = {}
+#         self.ax_dict = {}
+#         if separate:
+#             for animal_and_dataset_key in self.animal_and_dataset_key_list:
+#                 self.subfig_dict[animal_and_dataset_key], self.ax_dict[animal_and_dataset_key] = cf.gfa(ncols=1, nrows=nrows, **kwargs)
+#         else:
+#             fig, subfig = cf.get_fig_subfig()
+#             for i, animal_and_dataset_key in enumerate(self.animal_and_dataset_key_list):
+#                 self.fig_dict[animal_and_dataset_key] = fig
+#                 self.ax_dict[animal_and_dataset_key] = ax_dict[:, i]
+#         # ax_array是将ax_dict中的ax按照顺序排列成一个二维数组
+#         self.ax_array = np.empty((nrows, self.animal_num), dtype=object)
+#         for i, animal_and_dataset_key in enumerate(self.animal_and_dataset_key_list):
+#             self.ax_array[:, i] = self.ax_dict[animal_and_dataset_key]
+#         return self.fig_dict, self.ax_dict
+
+#     def add_tag(self):
+#         '''
+#         添加tag
+#         '''
+#         if self.separate:
+#             for k, ax in self.ax_dict:
+#                 cf.add_axes_list_tag_by_order(ax)
+#         else:
+#             cf.add_axes_list_tag_by_order(self.ax_array.flatten())
+
+#     def add_animal_name_on_first_row(self):
+#         '''
+#         在第一行添加动物名
+#         '''
+#         for i, animal in enumerate(self.animal_list):
+#             cf.add_text(self.ax_array[0, i], x=0.5, y=1.1, text=animal, va='center', ha='center')
+    
+#     def rm_redundant_ylabel(self):
+#         '''
+#         去掉多余的y标签
+#         '''
+#         if self.separate:
+#             pass
+#         else:
+#             for col in range(1, self.animal_num):
+#                 for row in range(self.nrows):
+#                     cf.rm_ax_ticklabel(self.ax_array[row, col], axis='y')
+
+#     def add_rounded_rectangle():
+#         pass
+
+#     def multi_ax_plot(self, func_list, kwargs_list):
+#         '''
+#         在多个ax上作图
+#         '''
+#         for func, kwargs in zip(func_list, kwargs_list):
+#             func(**kwargs)
+    
+#     def multi_ax_plot_by_single_visualizer(self, func_name, kwargs_list):
+#         '''
+#         通过SingleVisualizer的方法在多个ax上作图
+#         '''
+#         single_visualizer_list = [SingleVisualizer(animal, dataset_key, model_timedir) for animal, dataset_key, model_timedir in zip(self.animal_list, self.dataset_key_list, self.model_timedir_list)]
+#         func_list = [getattr(single_visualizer, func_name) for single_visualizer in single_visualizer_list]
+#         self.multi_ax_plot(func_list, kwargs_list)
+
+#     def save_fig(self, filename, **kwargs):
+#         '''
+#         保存fig
+#         '''
+#         if self.separate:
+#             for animal_and_dataset_key in self.animal_and_dataset_key_list:
+#                 cf.save_fig(self.fig_dict[animal_and_dataset_key], filename+'_'+animal_and_dataset_key, formats=['pdf', 'png'], **kwargs)
+#         else:
+#             # 从fig_dict中获取一个任意的fig保存
+#             for animal_and_dataset_key in self.animal_and_dataset_key_list:
+#                 cf.save_fig(self.fig_dict[animal_and_dataset_key], filename, formats=['pdf', 'png'], **kwargs)
+#                 break
+# endregion
+
+class SingleCaseVisualizer(cf.SingleVisualizer):
     '''
     进行单个动物的可视化
     '''
-    def __init__(self, animal, dataset_key, model_dir):
+    def __init__(self, animal, dataset_key, model_timedir):
+        super().__init__(title=cf.cat(animal, dataset_key))
         self.animal = animal
         self.dataset_key = dataset_key
         self.animal_info = AnimalInfo(animal, dataset_key)
-        self.SC = self.animal_info.SC
-        self.model_dir = model_dir
+        self.SC_data = self.animal_info.SC_data
+        self.model_timedir = model_timedir
         self.minimal_tol = 1e-3 # 后续改成高精度
+        self.bin_num = 20
+
+        self.axon_growth_model = AxonGrowthModelLoader(animal, dataset_key, model_timedir)
+        self.SC_model = self.axon_growth_model.get_suitable_SC_model()
+        self.SC_model_masked = self.axon_growth_model.get_suitable_SC_model_masked_as_data()
 
     def connection_on_flatmap(self, ax):
         pass
@@ -2176,29 +2488,65 @@ class SingleVisualizer:
     def vector_field(self, ax):
         pass
 
-    def model_data_SC(self, ax_model, ax_data):
-        pass
+    def data_model_SC(self, ax_model, ax_data):
+        visualize_connection_matrix_heatmap(ax_data, ax_model, matrix_data=self.SC_data, matrix_model=self.SC_model, animal=self.animal, dataset_key=self.dataset_key, log_matrix=False, topo=False)
 
     def area_level_performance(self, ax, performance_metric='correlation'):
         pass
 
-    def distance_distribution(self, ax, dim='2D'):
+    def distance_distribution(self, ax, data_or_model, dim='2D'):
         if dim == '2D':
             distance_matrix = self.animal_info.distance_2D
         elif dim == '3D':
             distance_matrix = self.animal_info.distance_3D
         
-        visualize_distribution_scaled_by_SC(ax, distance_matrix, self.SC, minimal_tol=self.minimal_tol, distribution_type='hist', distribution_kwargs=None)
+        if data_or_model == 'model':
+            SC = self.SC_model_masked
+        elif data_or_model == 'data':
+            SC = self.SC_data
 
-    def angle_distribution(self, ax, dim='2D'):
+        visualize_distribution_scaled_by_SC(ax, distance_matrix, SC, minimal_tol=self.minimal_tol, distribution_type='hist', distribution_kwargs=None)
+        cf.set_ax(ax, xlabel=f'Distance {dim} (mm)', ylog=True)
+
+    def angle_distribution(self, ax, data_or_model, dim='2D'):
+        if data_or_model == 'model':
+            SC = self.SC_model_masked
+        elif data_or_model == 'data':
+            SC = self.SC_data
+
         if dim == '2D':
             angle_matrix = self.animal_info.angle_2D
-            visualize_distribution_scaled_by_SC(ax, angle_matrix, self.SC, minimal_tol=self.minimal_tol, distribution_type='CDF', distribution_kwargs=None)
+            visualize_distribution_scaled_by_SC(ax, angle_matrix, SC, minimal_tol=self.minimal_tol, distribution_type='CDF', distribution_kwargs=None)
+            cf.set_ax(ax, xlabel='Angle', ylabel='CDF')
         elif dim == '3D':
-            angle_matrix = self.animal_info.angle_3D
+            angle_3D_dict = self.animal_info.angle_3D
+            azim_matrix = angle_3D_dict['azim_matrix']
+            elev_matrix = angle_3D_dict['elev_matrix']
 
-    def SC_distance_scatter(self, ax, dim='2D'):
-        pass
+    def data_model_angle_distribution(self, ax, dim='2D'):
+        if dim == '2D':
+            angle_matrix = self.animal_info.angle_2D
+            visualize_data_model_distribution_scaled_by_SC(ax, angle_matrix, self.SC_data, self.SC_model_masked, minimal_tol=self.minimal_tol, distribution_type='CDF', distribution_kwargs=None)
+            cf.set_ax(ax, xlabel='Angle', ylabel='CDF', legend_loc='lower right')
+        elif dim == '3D':
+            angle_3D_dict = self.animal_info.angle_3D
+            azim_matrix = angle_3D_dict['azim_matrix']
+            elev_matrix = angle_3D_dict['elev_matrix']
+
+    def SC_distance_scatter(self, ax, data_or_model, dim='2D'):
+        if dim == '2D':
+            distance_matrix = self.animal_info.distance_2D
+        elif dim == '3D':
+            distance_matrix = self.animal_info.distance_3D
+        
+        if data_or_model == 'model':
+            SC = self.SC_model_masked
+        elif data_or_model == 'data':
+            SC = self.SC_data
+        
+        SC_logged = log_SC(SC, self.animal, self.dataset_key, apply_c=False, apply_w=False)
+        cf.plt_density_scatter(ax, distance_matrix, SC)
+
 
     def SC_distribution(self, ax, log_transform=True):
         pass
@@ -2206,26 +2554,64 @@ class SingleVisualizer:
     def retrograde_neuron(self, ax):
         pass
 
-    def rm_long_range_correlation_change(self, ax, rm_mode='data'):
-        pass
+    def rm_longrange_correlation_change(self, ax, rm_mode='data', dim='2D', point_num=100):
+        if dim == '2D':
+            distance_matrix = self.animal_info.distance_2D
+        elif dim == '3D':
+            distance_matrix = self.animal_info.distance_3D
+
+        SC_model = self.SC_model_masked
+        SC_data = self.SC_data
+        SC_model_logged = log_SC(SC_model, self.animal, self.dataset_key, apply_c=False, apply_w=False)
+        SC_data_logged = log_SC(SC_data, self.animal, self.dataset_key, apply_c=False, apply_w=False)
+
+        corr_list = get_rm_longrange_correlation_change(SC_data, SC_model, distance_matrix, self.animal, self.dataset_key, point_num=point_num, rm_mode=rm_mode)
+        corr_list_logged_version = get_rm_longrange_correlation_change(SC_data_logged, SC_model_logged, distance_matrix, self.animal, self.dataset_key, point_num=point_num, rm_mode=rm_mode)
+        cf.plt_line(ax, x=np.linspace(0, np.nanmax(distance_matrix.values), point_num), y=corr_list, color=cf.BLUE, label='Original')
+        cf.plt_line(ax, x=np.linspace(0, np.nanmax(distance_matrix.values), point_num), y=corr_list_logged_version, color=cf.ORANGE, label='Logged')
+        cf.set_ax(ax, xlabel=f'Threshold (mm)', ylabel='Correlation', legend_loc='lower right')
 
     def category_long_range_proportion(self, ax):
         pass
 
 
-class MultipleVisualizer:
+class MultiCaseVisualizer(cf.MultiVisualizerByCol):
     '''
     进行多个动物的可视化
     '''
-    def __init__(self, animal_list, dataset_key_list, model_dir_list):
-        pass
+    def __init__(self, animal_list, dataset_key_list, model_timedir_list):
+        self.animal_list = animal_list
+        self.dataset_key_list = dataset_key_list
+        self.model_timedir_list = model_timedir_list
+        self.animal_num = len(self.animal_list)
+        self.animal_and_dataset_key_list = [cf.cat(animal, dataset_key) for animal, dataset_key in zip(self.animal_list, self.dataset_key_list)]
+        self.single_visualizer_list = [SingleCaseVisualizer(animal, dataset_key, model_timedir) for animal, dataset_key, model_timedir in zip(self.animal_list, self.dataset_key_list, self.model_timedir_list)]
+        super().__init__(self.single_visualizer_list)
+    
+    def add_subfig_title(self):
+        '''
+        只show动物名
+        '''
+        for animal, dataset_key in zip(self.animal_list, self.dataset_key_list):
+            cf.set_fig_title(self.subfig_dict[cf.cat(animal, dataset_key)], title=animal)
 
 
 class PaperFig:
-    def __init__(self):
-        pass
+    def __init__(self, model_timedir_list):
+        # self.animal_list = ['mouse', 'marmoset', 'macaque', 'human']
+        # self.dataset_key_list = ['gamanut', 'majka', 'markov40', 'lariviere']
+        self.animal_list = ['marmoset', 'macaque']
+        self.dataset_key_list = ['majka', 'markov40']
+        self.animal_num = len(self.animal_list)
+        self.model_timedir_list = model_timedir_list
+        self.multi_visualizer = MultiCaseVisualizer(self.animal_list, self.dataset_key_list, self.model_timedir_list)
+        self.figdir = '../../results/figs'
+        self.formats = [cf.SAVEFIG_RASTER_FORMAT, cf.SAVEFIG_FORMAT]
+        self.bbox_inches = 'tight'
+        self.save_fig_kwargs = {'formats': self.formats, 'bbox_inches': self.bbox_inches}
+        self.multi_visualizer.update_save_fig_kwargs(self.save_fig_kwargs)
 
-    def figure_1(self):
+    def fig_1(self):
         '''
         生成模型示意图
         '''
@@ -2252,14 +2638,14 @@ class PaperFig:
 
         fig, axes = cf.get_fig_ax(ncols=7, nrows=2, margin=cf.COMPACT_MARGIN, ax_width=cf.AX_WIDTH*0.6, ax_height=cf.AX_HEIGHT*0.6)
 
-        cf.add_axes_list_tag_by_order([axes[0, 0], axes[0, 2], axes[0, 4], axes[0, 6], axes[1, 6]])
-
         ax_dict = {}
         ax_dict['a'] = cf.merge_ax(axes[0:2, 0:2])
         ax_dict['b'] = cf.merge_ax(axes[0:2, 2:4])
         ax_dict['c'] = cf.merge_ax(axes[0:2, 4:6])
         ax_dict['d'] = axes[0, 6]
         ax_dict['e'] = axes[1, 6]
+
+        cf.add_axes_dict_tag(axes_dict=ax_dict, ref_ax=axes[0, 0])
 
         for ax in [ax_dict['a'], ax_dict['b'], ax_dict['c']]:
             show_area_boundary(ax, animal, dataset_key)
@@ -2296,21 +2682,69 @@ class PaperFig:
         cf.rm_ax_tick(ax)
         cf.rm_ax_ticklabel(ax)
 
-    def figure_2(self):
-        pass
+        cf.save_fig(fig, self.figdir+'/fig1', **self.save_fig_kwargs)
 
-    def figure_3(self):
-        pass
+    def fig_2(self):
+        '''
+        连接矩阵
+        '''
+        get_ax_kwargs = {'nrows': 2}
+        get_suitable_figsize_kwargs = {'nrows': 2}
+        fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
+        kwargs_list = []
+        for title, ax in ax_dict.items():
+            kwargs_list.append({'ax_data': ax[0], 'ax_model': ax[1]})
+        self.multi_visualizer.multi_ax_plot_by_single_visualizer('data_model_SC', kwargs_list)
+        self.multi_visualizer.add_tag()
+        self.multi_visualizer.add_subfig_title()
+        self.multi_visualizer.rm_redundant_xylabel()
+        self.multi_visualizer.save_fig(self.figdir+'/fig2')
 
-    def figure_4(self):
-        pass
+    def fig_3(self):
+        '''
+        UAR与EDR
+        '''
+        get_ax_kwargs = {'nrows': 2}
+        get_suitable_figsize_kwargs = {'nrows': 2}
+        fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
+        angle_kwargs_list = []
+        distance_kwargs_list = []
+        for title, ax in ax_dict.items():
+            angle_kwargs_list.append({'ax': ax[0], 'dim': '2D'})
+            distance_kwargs_list.append({'ax': ax[1], 'data_or_model': 'data', 'dim': '2D'})
+        self.multi_visualizer.multi_ax_plot_by_single_visualizer('data_model_angle_distribution', angle_kwargs_list)
+        self.multi_visualizer.multi_ax_plot_by_single_visualizer('distance_distribution', distance_kwargs_list)
+        self.multi_visualizer.add_tag()
+        self.multi_visualizer.add_subfig_title()
+        self.multi_visualizer.rm_redundant_xylabel()
+        self.multi_visualizer.save_fig(self.figdir+'/fig3')
 
-    def figure_5(self):
-        pass
+    def fig_4(self):
+        '''
+        marmoset
+        '''
 
-    def figure_6(self):
-        pass
+    def fig_5(self):
+        '''
+        marmoset area level performance and retrograde
+        '''
 
-    def figure_7(self):
+    def fig_6(self):
+        '''
+        distance analysis
+        '''
+        get_ax_kwargs = {'nrows': 2}
+        get_suitable_figsize_kwargs = {'nrows': 2}
+        fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
+        rm_longrange_kwargs_list = []
+        for title, ax in ax_dict.items():
+            rm_longrange_kwargs_list.append({'ax': ax[0], 'dim': '2D', 'rm_mode': 'data'})
+        self.multi_visualizer.multi_ax_plot_by_single_visualizer('rm_longrange_correlation_change', rm_longrange_kwargs_list)
+        self.multi_visualizer.add_tag()
+        self.multi_visualizer.add_subfig_title()
+        self.multi_visualizer.rm_redundant_xylabel()
+        self.multi_visualizer.save_fig(self.figdir+'/fig6')
+
+    def fig_7(self):
         pass
 # endregion
