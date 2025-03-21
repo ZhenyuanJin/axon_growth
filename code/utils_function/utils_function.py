@@ -85,6 +85,8 @@ import common_func.common_functions as cf
 # region global_variable
 SOURCE_COLOR = cf.RED
 TARGET_COLOR = cf.GREEN
+DATA_COLOR = cf.PURPLE
+MODEL_COLOR = cf.GREEN
 # endregion
 
 
@@ -248,7 +250,7 @@ class AnimalInfo(AnimalDir):
         SC_type_dict = {'mouse_gamanut': 'FLNe', 'marmoset_majka': 'FLNe', 'marmoset_V4': 'FLNe', 'macaque_markov29': 'FLNe', 'macaque_markov40': 'FLNe', 'human_lariviere': 'Dmri'}
         self.SC_type = SC_type_dict[self.animal_and_dataset_key]
 
-        name_information = get_names(self.animal, self.dataset_key)
+        name_information = get_name_dict(self.animal, self.dataset_key)
         self.source_name = name_information['source_name']
         self.target_name = name_information['target_name']
         self.full_name = name_information['full_name']
@@ -478,45 +480,93 @@ def load_neuron_density(animal, dataset_key):
     return cf.create_dict(animal_info.full_name, 1)
 
 
-@cf.to_be_improved
-def get_names(animal, dataset_key):
+def get_source_target_full_name(animal, dataset_key):
     '''
-    Note that for SC matrix, the name of each area is in full_name. However, for coords, they may be divided into several parts, for example, 11--1 and 11--2. Coords names are all_name_coords in code. Sometimes, you need to transform to another type, just use accurate_name_dict and name2namelist_dic
+    获取source_name, target_name, full_name
     '''
     animal_and_dataset_key = animal + '_' + dataset_key
 
     if animal_and_dataset_key == 'macaque_markov29':
         # target_name = ['V1', 'V2', 'V4', 'TEO', 'MT', 'Tepd', 'DP', 'STPc', '7A', 'STPr', 'STPi', 'PBr', '8l', '7m', '46d', '8m', '7B', '946d', '946v', '8B', '10', 'F7', 'F5', '5', 'F2',  '24c', 'ProM', '2', 'F1']
         target_name = ['V1', 'V2', 'V4', 'DP', 'MT', '8m', '5', '8l', 'TEO', '2', 'F1', 'STPc', '7A', '46d', '10', '946v', '946d', 'F5', 'Tepd', 'PBr', '7m', '7B', 'F2', 'STPi', 'ProM', 'F7', '8B', 'STPr', '24c']
-        coords_target_name = target_name
         source_name = ['10', '11', '12', '13', '14', '1', '23', '24a', '24b', '24c', '24d', '25', '2930', '2', '31', '32', '3', '44', '45A', '45B', '46d', '46v', '5', '7A', '7B', '7m', '7op', '8B', '8l', '8m', '8r', '946d', '946v', '9', 'AIP', 'CORE', 'DP', 'ENTORHINAL', 'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'FST', 'Gu', 'INSULA', 'IPa', 'LB', 'LIP', 'MB', 'MIP', 'MST', 'MT', 'OPAI', 'OPRO', 'PBc', 'PBr', 'PERIRHINAL', 'PGa', 'PIP', 'PIRIFORM', 'Pi', 'Pro.St.', 'ProM', 'SII', 'STPc', 'STPi', 'STPr', 'SUBICULUM', 'TEMPORAL_POLE', 'TEO', 'TEOm', 'TEad', 'TEama', 'TEamp', 'TEav', 'TEpv', 'THTF', 'TPt', 'Tepd', 'V1', 'V2', 'V3A', 'V3', 'V4', 'V4t', 'V6A', 'V6', 'VIP']
-        accurate_name_dict = {}
-        for name in all_name_coords:
-            if name in ['11--1', '11--2']:
-                accurate_name_dict[name] = '11'
-            else:
-                accurate_name_dict[name] = name
-        name2namelist_dict = {}
-        for name in source_name:
-            if name in ['11']:
-                name2namelist_dict[name] = ['11--1', '11--2']
-            else:
-                name2namelist_dict[name] = [name]
 
     if animal_and_dataset_key == 'macaque_markov40':
         target_name = ['V1', 'V2', 'V4', 'TEO', '946d', 'F5', '8m', '7A', 'DP', '2', '5', '7B', 'STPr', 'STPi', 'STPc', 'PBr', 'Tepd', '24c', 'F1', 'F2', 'F7', 'ProM', '8l', '946v', '46d', '8B', '10', 'MT', '7m', '9', '25', 'F3', 'F4', '32', 'LIP', 'OPRO', '3', '1', '45A', 'V6']
         source_name = ['10', '11', '12', '13', '14', '1', '23', '24a', '24b', '24c', '24d', '25', '2930', '2', '31', '32', '3', '44', '45A', '45B', '46d', '46v', '5', '7A', '7B', '7m', '7op', '8B', '8l', '8m', '8r', '946d', '946v', '9', 'AIP', 'CORE', 'DP', 'ENTORHINAL', 'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'FST', 'Gu', 'INSULA', 'IPa', 'LB', 'LIP', 'MB', 'MIP', 'MST', 'MT', 'OPAI', 'OPRO', 'PBc', 'PBr', 'PERIRHINAL', 'PGa', 'PIP', 'PIRIFORM', 'Pi', 'Pro.St.', 'ProM', 'SII', 'STPc', 'STPi', 'STPr', 'SUBICULUM', 'TEMPORAL_POLE', 'TEO', 'TEOm', 'TEad', 'TEama', 'TEamp', 'TEav', 'TEpv', 'THTF', 'TPt', 'Tepd', 'V1', 'V2', 'V3A', 'V3', 'V4', 'V4t', 'V6A', 'V6', 'VIP']
-        full_name = cf.union_list(target_name, source_name)
-        name_to_split_name_dict = {}
+
+    if animal_and_dataset_key == 'marmoset_majka':
+        target_name = ['A1-2', 'A10', 'A11', 'A19DI', 'A19M', 'A23a', 'A23b', 'A23c', 'A24d', 'A32', 'A32V', 'A3a', 'A3b', 'A45', 'A46D', 'A47L', 'A4ab', 'A4c', 'A6DC', 'A6DR', 'A6M', 'A6Va', 'A8C', 'A8aD', 'A8aV', 'A8b', 'A9', 'AIP', 'AuA1', 'AuCM', 'AuCPB', 'AuML', 'AuRT', 'LIP', 'MIP', 'MST', 'OPt', 'PE', 'PEC', 'PF', 'PFG', 'PG', 'PGM', 'PGa-IPa', 'S2E', 'TE3', 'TEO', 'TPO', 'V1', 'V2', 'V3A', 'V4', 'V4T', 'V5', 'V6']
+        # coords_target_name = ['A1-2', 'A10', 'A11', 'A19DI', 'A19M', 'A23a', 'A23b', 'A23c--1', 'A23c--2', 'A24d', 'A32', 'A32V', 'A3a', 'A3b', 'A45', 'A46D', 'A47L', 'A4ab', 'A4c', 'A6DC', 'A6DR', 'A6M', 'A6Va', 'A8C', 'A8aD', 'A8aV', 'A8b', 'A9', 'AIP', 'AuA1', 'AuCM', 'AuCPB', 'AuML', 'AuRT', 'LIP', 'MIP', 'MST', 'OPt', 'PE', 'PEC', 'PF', 'PFG', 'PG', 'PGM', 'PGa-IPa', 'S2E', 'TE3', 'TEO', 'TPO', 'V1', 'V2--1', 'V2--2', 'V3A', 'V4', 'V4T', 'V5', 'V6']
+        source_name = ['A1-2', 'A10', 'A11', 'A13L', 'A13M', 'A13a', 'A13b', 'A14C', 'A14R', 'A19DI', 'A19M', 'A23V', 'A23a', 'A23b', 'A23c', 'A24a', 'A24b', 'A24c', 'A24d', 'A25', 'A29a-c', 'A29d', 'A30', 'A31', 'A32', 'A32V', 'A35', 'A36', 'A3a', 'A3b', 'A45', 'A46D', 'A46V', 'A47L', 'A47M', 'A47O', 'A4ab', 'A4c', 'A6DC', 'A6DR', 'A6M', 'A6Va', 'A6Vb', 'A8C', 'A8aD', 'A8aV', 'A8b', 'A9', 'AI', 'AIP', 'APir', 'AuA1', 'AuAL', 'AuCL', 'AuCM', 'AuCPB', 'AuML', 'AuR', 'AuRM', 'AuRPB', 'AuRT', 'AuRTL', 'AuRTM', 'DI', 'Ent', 'FST', 'GI', 'Gu', 'IPro', 'LIP', 'MIP', 'MST', 'OPAl', 'OPro', 'OPt', 'PE', 'PEC', 'PF', 'PFG', 'PG', 'PGM', 'PGa-IPa', 'PaIL', 'PaIM', 'Pir', 'ProM', 'ProSt', 'ReI', 'S2E', 'S2I', 'S2PR', 'S2PV', 'STR', 'TE1', 'TE2', 'TE3', 'TEO', 'TF', 'TFO', 'TH', 'TL', 'TLO', 'TPO', 'TPPro', 'TPro', 'TPt', 'V1', 'V2', 'V3', 'V3A', 'V4', 'V4T', 'V5', 'V6', 'V6A', 'VIP']
+
+    if animal_and_dataset_key == 'marmoset_riken':
+        print('not tested')
+        target_name = ['A10', 'A9', 'A8b', 'A46D', 'A46V', 'A8aD', 'A8aV', 'A47L', 'A47M', 'A45', 'A47O', 'ProM', 'A11', 'A13a', 'A13b', 'A13L', 'A13M', 'OPAl', 'OPro', 'Gu', 'A14C', 'A14R', 'A25', 'A32V', 'A32', 'A24a', 'A24b', 'A24c', 'A24d', 'A6DR', 'A6DC', 'A6Va', 'A6Vb', 'A6M', 'A8C', 'A4ab', 'A4c', 'AI', 'DI', 'GI', 'ReI', 'IPro', 'PaIL', 'PaIM', 'TPro', 'A3a', 'A3b', 'A1_2', 'S2E', 'S2I', 'S2PR', 'S2PV', 'AuRTL', 'AuRT', 'AuRPB', 'AuRTM', 'AuR', 'AuRM', 'AuAL', 'AuA1', 'AuCM', 'AuCPB', 'AuML', 'AuCL', 'STR', 'TPt', 'TE1', 'TE2', 'TE3', 'TEO', 'Pga_IPa', 'TPO', 'TPPro', 'Ent', 'A36', 'A35', 'TF', 'TL', 'TH', 'TLO', 'TFO', 'PaS', 'PrS', 'A23a', 'A23b', 'A23c', 'A23V', 'A29a_c', 'A29d', 'A30', 'ProSt', 'PGM', 'A31', 'PE', 'PEC', 'V6A', 'PF', 'PFG', 'OPt', 'PG', 'VIP', 'MIP', 'AIP', 'LIP', 'V1', 'V2', 'V3', 'V3A', 'A19DI', 'A19M', 'V4', 'V4T' 'V5', 'MST', 'FST', 'V6', 'Pir']
+        source_name = ['A11', 'A45', 'A13M', 'A8b', 'A32', 'A24a', 'A8aD', 'A46V', 'A8aV', 'A46D', 'A6Vb', 'A24b', 'A6DR', 'A25', 'A14R', 'A13L', 'A6M', 'A9', 'A10', 'A47O']
+
+    if animal_and_dataset_key == 'marmoset_V4':
+        target_name = ['4', '9', '10', '12', '14', '15', '18', '19', '20', '21', '25', '27', '28', '29', '31', '33', '34', '35', '39', '40', '41', '45', '46', '48', '49', '50', '58', '62', '64', '66', '67', '72', '73', '74', '79', '81', '88', '91', '92', '94', '95']
+        source_name = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22', '23', '24', '25', '26', '27', '28', '29', '30', '31', '32', '33', '34', '35', '36', '37', '38', '39', '40', '41', '42', '43', '44', '45', '46', '47', '48', '49', '50', '51', '52', '53', '54', '55', '56', '57', '58', '59', '60', '61', '62', '63', '64', '65', '66', '67', '68', '69', '70', '71', '72', '73', '74', '75', '76', '77', '78', '79', '80', '81', '82', '83', '84', '85', '86', '87', '88', '89', '90', '91', '92', '93', '94', '95', '96']
+
+    if animal_and_dataset_key == 'mouse_gamanut':
+        target_name = ['GU', 'SSp-un', 'MOp', 'VISC', 'SSs', 'PL', 'SSp-bfd', 'ACAd', 'RL', 'AL', 'DP', 'AUDpo', 'AM', 'MM', 'V1', 'LM', 'PM', 'P', 'RSPd']
+        source_name = ['SSp-nm', 'SSp-lj', 'AIv', 'GU', 'AIp', 'FRP', 'SSp-ul', 'AId', 'SSp-un', 'SSp-ll', 'VISC', 'ORBl', 'PL', 'ORBm', 'ILA', 'MOp', 'MOs', 'SSs', 'ACAd', 'SSp-bfd', 'TEa', 'PERI', 'AUDv', 'AUDd', 'SSp-tr', 'ACAv', 'AUDp', 'ECT', 'A', 'RL', 'V1', 'RSPagl', 'TEp', 'RSPd', 'AM', 'RSPv', 'LM', 'MM', 'PM', 'AL', 'LI', 'POR', 'AUDpo', 'DP', 'LLA', 'PORa', 'P']
+
+    if animal_and_dataset_key == 'human_lariviere':
+        target_name = ['V1', 'MST', 'V6', 'V2', 'V3', 'V4', 'V8', '4', '3b', 'FEF', 'PEF', '55b', 'V3A', 'RSC', 'POS2', 'V7', 'IPS1', 'FFC', 'V3B', 'LO1', 'LO2', 'PIT', 'MT', 'A1', 'PSL', 'SFL', 'PCV', 'STV', '7Pm', '7m', 'POS1', '23d', 'v23ab', 'd23ab', '31pv', '5m', '5mv', '23c', '5L', '24dd', '24dv', '7AL', 'SCEF', '6ma', '7Am', '7PL', '7PC', 'LIPv', 'VIP', 'MIP', '1', '2', '3a', '6d', '6mp', '6v', 'p24pr', '33pr', 'a24pr', 'p32pr', 'a24', 'd32', '8BM', 'p32', '10r', '47m', '8Av', '8Ad', '9m', '8BL', '9p', '10d', '8C', '44', '45', '47l', 'a47r', '6r', 'IFJa', 'IFJp', 'IFSp', 'IFSa', 'p9-46v', '46', 'a9-46v', '9-46d', '9a', '10v', 'a10p', '10pp', '11l', '13l', 'OFC', '47s', 'LIPd', '6a', 'i6-8', 's6-8', '43', 'OP4', 'OP1', 'OP2-3', '52', 'RI', 'PFcm', 'PoI2', 'TA2', 'FOP4', 'MI', 'Pir', 'AVI', 'AAIC', 'FOP1', 'FOP3', 'FOP2', 'PFt', 'AIP', 'EC', 'PreS', 'H', 'ProS', 'PeEc', 'STGa', 'PBelt', 'A5', 'PHA1', 'PHA3', 'STSda', 'STSdp', 'STSvp', 'TGd', 'TE1a', 'TE1p', 'TE2a', 'TF', 'TE2p', 'PHT', 'PH', 'TPOJ1', 'TPOJ2', 'TPOJ3', 'DVT', 'PGp', 'IP2', 'IP1', 'IP0', 'PFop', 'PF', 'PFm', 'PGi', 'PGs', 'V6A', 'VMV1', 'VMV3', 'PHA2', 'V4t', 'FST', 'V3CD', 'LO3', 'VMV2', '31pd', '31a', 'VVC', '25', 's32', 'pOFC', 'PoI1', 'Ig', 'FOP5', 'p10p', 'p47r', 'TGv', 'MBelt', 'LBelt', 'A4', 'STSva', 'TE1m', 'PI', 'a32pr', 'p24']
+        source_name = target_name.copy()
+
+    if len(target_name) > len(source_name):
+        full_name = target_name
+    else:
+        full_name = source_name
+    return source_name, target_name, full_name
+
+
+def get_full_split_name(name_to_split_name_dict):
+    '''
+    获取full_split_name
+    '''
+    full_split_name = []
+    for name, name_to_split_name in name_to_split_name_dict.items():
+        full_split_name.extend(name_to_split_name)
+    return full_split_name
+
+
+def get_name_dict(animal, dataset_key):
+    '''
+    Note that for SC matrix, the name of each area is in full_name. However, for coords, they may be divided into several parts, for example, 11--1 and 11--2. Coords names are all_name_coords in code. Sometimes, you need to transform to another type, just use name_to_split_name_dict and split_name_to_name_dict.
+    '''
+    animal_and_dataset_key = animal + '_' + dataset_key
+    source_name, target_name, full_name = get_source_target_full_name(animal, dataset_key)
+    name_to_split_name_dict = {}
+    split_name_to_name_dict = {}
+
+    if animal_and_dataset_key == 'macaque_markov29':
         for name in full_name:
             if name in ['11']:
                 name_to_split_name_dict[name] = ['11--1', '11--2']
             else:
                 name_to_split_name_dict[name] = [name]
-        full_split_name = []
-        for name, name_to_split_name in name_to_split_name_dict.items():
-            full_split_name.extend(name_to_split_name)
-        split_name_to_name_dict = {}
+
+        full_split_name = get_full_split_name(name_to_split_name_dict)
+
+        for name in full_split_name:
+            if name in ['11--1', '11--2']:
+                split_name_to_name_dict[name] = '11'
+            else:
+                split_name_to_name_dict[name] = name
+
+    if animal_and_dataset_key == 'macaque_markov40':
+        for name in full_name:
+            if name in ['11']:
+                name_to_split_name_dict[name] = ['11--1', '11--2']
+            else:
+                name_to_split_name_dict[name] = [name]
+
+        full_split_name = get_full_split_name(name_to_split_name_dict)
+
         for name in full_split_name:
             if name in ['11--1', '11--2']:
                 split_name_to_name_dict[name] = '11'
@@ -524,11 +574,6 @@ def get_names(animal, dataset_key):
                 split_name_to_name_dict[name] = name
 
     if animal_and_dataset_key == 'marmoset_majka':
-        target_name = ['A1-2', 'A10', 'A11', 'A19DI', 'A19M', 'A23a', 'A23b', 'A23c', 'A24d', 'A32', 'A32V', 'A3a', 'A3b', 'A45', 'A46D', 'A47L', 'A4ab', 'A4c', 'A6DC', 'A6DR', 'A6M', 'A6Va', 'A8C', 'A8aD', 'A8aV', 'A8b', 'A9', 'AIP', 'AuA1', 'AuCM', 'AuCPB', 'AuML', 'AuRT', 'LIP', 'MIP', 'MST', 'OPt', 'PE', 'PEC', 'PF', 'PFG', 'PG', 'PGM', 'PGa-IPa', 'S2E', 'TE3', 'TEO', 'TPO', 'V1', 'V2', 'V3A', 'V4', 'V4T', 'V5', 'V6']
-        # coords_target_name = ['A1-2', 'A10', 'A11', 'A19DI', 'A19M', 'A23a', 'A23b', 'A23c--1', 'A23c--2', 'A24d', 'A32', 'A32V', 'A3a', 'A3b', 'A45', 'A46D', 'A47L', 'A4ab', 'A4c', 'A6DC', 'A6DR', 'A6M', 'A6Va', 'A8C', 'A8aD', 'A8aV', 'A8b', 'A9', 'AIP', 'AuA1', 'AuCM', 'AuCPB', 'AuML', 'AuRT', 'LIP', 'MIP', 'MST', 'OPt', 'PE', 'PEC', 'PF', 'PFG', 'PG', 'PGM', 'PGa-IPa', 'S2E', 'TE3', 'TEO', 'TPO', 'V1', 'V2--1', 'V2--2', 'V3A', 'V4', 'V4T', 'V5', 'V6']
-        source_name = ['A1-2', 'A10', 'A11', 'A13L', 'A13M', 'A13a', 'A13b', 'A14C', 'A14R', 'A19DI', 'A19M', 'A23V', 'A23a', 'A23b', 'A23c', 'A24a', 'A24b', 'A24c', 'A24d', 'A25', 'A29a-c', 'A29d', 'A30', 'A31', 'A32', 'A32V', 'A35', 'A36', 'A3a', 'A3b', 'A45', 'A46D', 'A46V', 'A47L', 'A47M', 'A47O', 'A4ab', 'A4c', 'A6DC', 'A6DR', 'A6M', 'A6Va', 'A6Vb', 'A8C', 'A8aD', 'A8aV', 'A8b', 'A9', 'AI', 'AIP', 'APir', 'AuA1', 'AuAL', 'AuCL', 'AuCM', 'AuCPB', 'AuML', 'AuR', 'AuRM', 'AuRPB', 'AuRT', 'AuRTL', 'AuRTM', 'DI', 'Ent', 'FST', 'GI', 'Gu', 'IPro', 'LIP', 'MIP', 'MST', 'OPAl', 'OPro', 'OPt', 'PE', 'PEC', 'PF', 'PFG', 'PG', 'PGM', 'PGa-IPa', 'PaIL', 'PaIM', 'Pir', 'ProM', 'ProSt', 'ReI', 'S2E', 'S2I', 'S2PR', 'S2PV', 'STR', 'TE1', 'TE2', 'TE3', 'TEO', 'TF', 'TFO', 'TH', 'TL', 'TLO', 'TPO', 'TPPro', 'TPro', 'TPt', 'V1', 'V2', 'V3', 'V3A', 'V4', 'V4T', 'V5', 'V6', 'V6A', 'VIP']
-        full_name = cf.union_list(target_name, source_name)
-        name_to_split_name_dict = {}
         for name in full_name:
             name_to_split_name_dict[name] = [name]
             if name in ['A23c']:
@@ -559,10 +604,9 @@ def get_names(animal, dataset_key):
                 name_to_split_name_dict[name] = ['TH--1', 'TH--2']
             if name in ['V2']:
                 name_to_split_name_dict[name] = ['V2--1', 'V2--2']
-        full_split_name = []
-        for name, name_to_split_name in name_to_split_name_dict.items():
-            full_split_name.extend(name_to_split_name)
-        split_name_to_name_dict = {}
+
+        full_split_name = get_full_split_name(name_to_split_name_dict)
+
         for name in full_split_name:
             split_name_to_name_dict[name] = name
             if name in ['A23c--1', 'A23c--2']:
@@ -595,130 +639,113 @@ def get_names(animal, dataset_key):
                 split_name_to_name_dict[name] = 'V2'
 
     if animal_and_dataset_key == 'marmoset_riken':
-        target_name = ['A10', 'A9', 'A8b', 'A46D', 'A46V', 'A8aD', 'A8aV', 'A47L', 'A47M', 'A45', 'A47O', 'ProM', 'A11', 'A13a', 'A13b', 'A13L', 'A13M', 'OPAl', 'OPro', 'Gu', 'A14C', 'A14R', 'A25', 'A32V', 'A32', 'A24a', 'A24b', 'A24c', 'A24d', 'A6DR', 'A6DC', 'A6Va', 'A6Vb', 'A6M', 'A8C', 'A4ab', 'A4c', 'AI', 'DI', 'GI', 'ReI', 'IPro', 'PaIL', 'PaIM', 'TPro', 'A3a', 'A3b', 'A1_2', 'S2E', 'S2I', 'S2PR', 'S2PV', 'AuRTL', 'AuRT', 'AuRPB', 'AuRTM', 'AuR', 'AuRM', 'AuAL', 'AuA1', 'AuCM', 'AuCPB', 'AuML', 'AuCL', 'STR', 'TPt', 'TE1', 'TE2', 'TE3', 'TEO', 'Pga_IPa', 'TPO', 'TPPro', 'Ent', 'A36', 'A35', 'TF', 'TL', 'TH', 'TLO', 'TFO', 'PaS', 'PrS', 'A23a', 'A23b', 'A23c', 'A23V', 'A29a_c', 'A29d', 'A30', 'ProSt', 'PGM', 'A31', 'PE', 'PEC', 'V6A', 'PF', 'PFG', 'OPt', 'PG', 'VIP', 'MIP', 'AIP', 'LIP', 'V1', 'V2', 'V3', 'V3A', 'A19DI', 'A19M', 'V4', 'V4T' 'V5', 'MST', 'FST', 'V6', 'Pir']
-        source_name = ['A11', 'A45', 'A13M', 'A8b', 'A32', 'A24a', 'A8aD', 'A46V', 'A8aV', 'A46D', 'A6Vb', 'A24b', 'A6DR', 'A25', 'A14R', 'A13L', 'A6M', 'A9', 'A10', 'A47O']
-        coords_source_name = []
-        accurate_name_dict = {}
-        for name in all_name_coords:
-            accurate_name_dict[name] = name
-            pass
-        name2namelist_dict = {}
-        for name in source_name:
-            name2namelist_dict[name] = [name]
-            pass
+        for name in full_name:
+            name_to_split_name_dict[name] = [name]
 
-    if animal_and_dataset_key == 'marmoset-V4':
-        target_name = ['4', '9', '10', '12', '14', '15', '18', '19', '20', '21', '25', '27', '28', '29', '31', '33', '34', '35', '39', '40', '41', '45', '46', '48', '49', '50', '58', '62', '64', '66', '67', '72', '73', '74', '79', '81', '88', '91', '92', '94', '95']
-        source_name = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22', '23', '24', '25', '26', '27', '28', '29', '30', '31', '32', '33', '34', '35', '36', '37', '38', '39', '40', '41', '42', '43', '44', '45', '46', '47', '48', '49', '50', '51', '52', '53', '54', '55', '56', '57', '58', '59', '60', '61', '62', '63', '64', '65', '66', '67', '68', '69', '70', '71', '72', '73', '74', '75', '76', '77', '78', '79', '80', '81', '82', '83', '84', '85', '86', '87', '88', '89', '90', '91', '92', '93', '94', '95', '96']
-        coords_target_name = ['4', '9', '10', '12', '14', '15', '18', '19', '20', '21', '25', '27', '28', '29', '31', '33', '34', '35', '39', '40', '41', '45', '46', '48', '49', '50', '58', '62', '64', '66', '67', '72', '73', '74', '79', '81', '88', '91', '92', '94', '95']
-        accurate_name_dict = {}
-        for name in all_name_coords:
-            accurate_name_dict[name] = name
-            if name in ['11--1', '11--2']:
-                accurate_name_dict[name] = '11'
-            if name in ['43--1', '43--2']:
-                accurate_name_dict[name] = '43'
-            if name in ['77--1', '77--2']:
-                accurate_name_dict[name] = '77'
-        name2namelist_dict = {}
-        for name in source_name:
-            name2namelist_dict[name] = [name]
+        full_split_name = get_full_split_name(name_to_split_name_dict)
+
+        for name in full_split_name:
+            split_name_to_name_dict[name] = name
+
+    if animal_and_dataset_key == 'marmoset_V4':
+        for name in full_name:
+            name_to_split_name_dict[name] = [name]
             if name in ['11']:
-                name2namelist_dict[name] = ['11--1', '11--2']
+                name_to_split_name_dict[name] = ['11--1', '11--2']
             if name in ['43']:
-                name2namelist_dict[name] = ['43--1', '43--2']
+                name_to_split_name_dict[name] = ['43--1', '43--2']
             if name in ['77']:
-                name2namelist_dict[name] = ['77--1', '77--2']
+                name_to_split_name_dict[name] = ['77--1', '77--2']
 
-    if animal_and_dataset_key == 'mouse':
-        target_name = ['GU', 'SSp-un', 'MOp', 'VISC', 'SSs', 'PL', 'SSp-bfd', 'ACAd', 'RL', 'AL', 'DP', 'AUDpo', 'AM', 'MM', 'V1', 'LM', 'PM', 'P', 'RSPd']
-        coords_target_name = target_name
-        source_name = ['SSp-nm', 'SSp-lj', 'AIv', 'GU', 'AIp', 'FRP', 'SSp-ul', 'AId', 'SSp-un', 'SSp-ll', 'VISC', 'ORBl', 'PL', 'ORBm', 'ILA', 'MOp', 'MOs', 'SSs', 'ACAd', 'SSp-bfd', 'TEa', 'PERI', 'AUDv', 'AUDd', 'SSp-tr', 'ACAv', 'AUDp', 'ECT', 'A', 'RL', 'V1', 'RSPagl', 'TEp', 'RSPd', 'AM', 'RSPv', 'LM', 'MM', 'PM', 'AL', 'LI', 'POR', 'AUDpo', 'DP', 'LLA', 'PORa', 'P']
-        accurate_name_dict = {}
-        for name in all_name_coords:
-            accurate_name_dict[name] = name
-        name2namelist_dict = {}
-        for name in source_name:
-            name2namelist_dict[name] = [name]
+        full_split_name = get_full_split_name(name_to_split_name_dict)
 
-    if animal_and_dataset_key == 'human':
-        target_name = ['V1', 'MST', 'V6', 'V2', 'V3', 'V4', 'V8', '4', '3b', 'FEF', 'PEF', '55b', 'V3A', 'RSC', 'POS2', 'V7', 'IPS1', 'FFC', 'V3B', 'LO1', 'LO2', 'PIT', 'MT', 'A1', 'PSL', 'SFL', 'PCV', 'STV', '7Pm', '7m', 'POS1', '23d', 'v23ab', 'd23ab', '31pv', '5m', '5mv', '23c', '5L', '24dd', '24dv', '7AL', 'SCEF', '6ma', '7Am', '7PL', '7PC', 'LIPv', 'VIP', 'MIP', '1', '2', '3a', '6d', '6mp', '6v', 'p24pr', '33pr', 'a24pr', 'p32pr', 'a24', 'd32', '8BM', 'p32', '10r', '47m', '8Av', '8Ad', '9m', '8BL', '9p', '10d', '8C', '44', '45', '47l', 'a47r', '6r', 'IFJa', 'IFJp', 'IFSp', 'IFSa', 'p9-46v', '46', 'a9-46v', '9-46d', '9a', '10v', 'a10p', '10pp', '11l', '13l', 'OFC', '47s', 'LIPd', '6a', 'i6-8', 's6-8', '43', 'OP4', 'OP1', 'OP2-3', '52', 'RI', 'PFcm', 'PoI2', 'TA2', 'FOP4', 'MI', 'Pir', 'AVI', 'AAIC', 'FOP1', 'FOP3', 'FOP2', 'PFt', 'AIP', 'EC', 'PreS', 'H', 'ProS', 'PeEc', 'STGa', 'PBelt', 'A5', 'PHA1', 'PHA3', 'STSda', 'STSdp', 'STSvp', 'TGd', 'TE1a', 'TE1p', 'TE2a', 'TF', 'TE2p', 'PHT', 'PH', 'TPOJ1', 'TPOJ2', 'TPOJ3', 'DVT', 'PGp', 'IP2', 'IP1', 'IP0', 'PFop', 'PF', 'PFm', 'PGi', 'PGs', 'V6A', 'VMV1', 'VMV3', 'PHA2', 'V4t', 'FST', 'V3CD', 'LO3', 'VMV2', '31pd', '31a', 'VVC', '25', 's32', 'pOFC', 'PoI1', 'Ig', 'FOP5', 'p10p', 'p47r', 'TGv', 'MBelt', 'LBelt', 'A4', 'STSva', 'TE1m', 'PI', 'a32pr', 'p24']
-        coords_target_name = ['V1', 'MST', 'V6', 'V2', 'V3', 'V4', 'V8', '4', '3b', 'FEF', 'PEF', '55b', 'V3A', 'RSC--1', 'RSC--2', 'POS2', 'V7', 'IPS1', 'FFC', 'V3B', 'LO1', 'LO2', 'PIT', 'MT', 'A1', 'PSL', 'SFL', 'PCV', 'STV', '7Pm', '7m', 'POS1', '23d--1', '23d--2', 'v23ab', 'd23ab', '31pv', '5m', '5mv--1', '5mv--2', '23c--1', '23c--2', '5L', '24dd', '24dv', '7AL', 'SCEF', '6ma', '7Am', '7PL', '7PC', 'LIPv', 'VIP', 'MIP', '1', '2', '3a', '6d', '6mp', '6v', 'p24pr', '33pr', 'a24pr', 'p32pr', 'a24', 'd32', '8BM', 'p32', '10r', '47m', '8Av', '8Ad', '9m', '8BL', '9p', '10d', '8C', '44', '45', '47l', 'a47r--1', 'a47r--2', '6r', 'IFJa', 'IFJp', 'IFSp', 'IFSa', 'p9-46v', '46', 'a9-46v', '9-46d', '9a', '10v', 'a10p', '10pp--1', '10pp--2', '11l', '13l', 'OFC--1', 'OFC--2', '47s', 'LIPd', '6a', 'i6-8', 's6-8', '43', 'OP4', 'OP1', 'OP2-3', '52', 'RI', 'PFcm', 'PoI2--1', 'PoI2--2', 'TA2', 'FOP4', 'MI', 'Pir--1', 'Pir--2', 'AVI', 'AAIC--1', 'AAIC--2', 'FOP1', 'FOP3', 'FOP2', 'PFt', 'AIP', 'EC', 'PreS--1', 'PreS--2', 'H', 'ProS--1', 'ProS--2', 'PeEc', 'STGa', 'PBelt', 'A5', 'PHA1', 'PHA3', 'STSda', 'STSdp', 'STSvp', 'TGd', 'TE1a', 'TE1p', 'TE2a', 'TF', 'TE2p', 'PHT', 'PH', 'TPOJ1', 'TPOJ2', 'TPOJ3', 'DVT', 'PGp', 'IP2', 'IP1', 'IP0', 'PFop', 'PF', 'PFm', 'PGi', 'PGs', 'V6A', 'VMV1', 'VMV3', 'PHA2', 'V4t', 'FST', 'V3CD', 'LO3', 'VMV2', '31pd', '31a', 'VVC', '25', 's32', 'pOFC--1', 'pOFC--2', 'PoI1--1', 'PoI1--2', 'Ig', 'FOP5', 'p10p', 'p47r--1', 'p47r--2', 'TGv', 'MBelt', 'LBelt', 'A4', 'STSva', 'TE1m', 'PI', 'a32pr', 'p24']
-        source_name = ['V1', 'MST', 'V6', 'V2', 'V3', 'V4', 'V8', '4', '3b', 'FEF', 'PEF', '55b', 'V3A', 'RSC', 'POS2', 'V7', 'IPS1', 'FFC', 'V3B', 'LO1', 'LO2', 'PIT', 'MT', 'A1', 'PSL', 'SFL', 'PCV', 'STV', '7Pm', '7m', 'POS1', '23d', 'v23ab', 'd23ab', '31pv', '5m', '5mv', '23c', '5L', '24dd', '24dv', '7AL', 'SCEF', '6ma', '7Am', '7PL', '7PC', 'LIPv', 'VIP', 'MIP', '1', '2', '3a', '6d', '6mp', '6v', 'p24pr', '33pr', 'a24pr', 'p32pr', 'a24', 'd32', '8BM', 'p32', '10r', '47m', '8Av', '8Ad', '9m', '8BL', '9p', '10d', '8C', '44', '45', '47l', 'a47r', '6r', 'IFJa', 'IFJp', 'IFSp', 'IFSa', 'p9-46v', '46', 'a9-46v', '9-46d', '9a', '10v', 'a10p', '10pp', '11l', '13l', 'OFC', '47s', 'LIPd', '6a', 'i6-8', 's6-8', '43', 'OP4', 'OP1', 'OP2-3', '52', 'RI', 'PFcm', 'PoI2', 'TA2', 'FOP4', 'MI', 'Pir', 'AVI', 'AAIC', 'FOP1', 'FOP3', 'FOP2', 'PFt', 'AIP', 'EC', 'PreS', 'H', 'ProS', 'PeEc', 'STGa', 'PBelt', 'A5', 'PHA1', 'PHA3', 'STSda', 'STSdp', 'STSvp', 'TGd', 'TE1a', 'TE1p', 'TE2a', 'TF', 'TE2p', 'PHT', 'PH', 'TPOJ1', 'TPOJ2', 'TPOJ3', 'DVT', 'PGp', 'IP2', 'IP1', 'IP0', 'PFop', 'PF', 'PFm', 'PGi', 'PGs', 'V6A', 'VMV1', 'VMV3', 'PHA2', 'V4t', 'FST', 'V3CD', 'LO3', 'VMV2', '31pd', '31a', 'VVC', '25', 's32', 'pOFC', 'PoI1', 'Ig', 'FOP5', 'p10p', 'p47r', 'TGv', 'MBelt', 'LBelt', 'A4', 'STSva', 'TE1m', 'PI', 'a32pr', 'p24']
-        accurate_name_dict = {}
-        for name in all_name_coords:
-            accurate_name_dict[name] = name
-            if name in ['10pp--1', '10pp--2']:
-                accurate_name_dict[name] = '10pp'
-            if name in ['23c--1', '23c--2']:
-                accurate_name_dict[name] = '23c'
-            if name in ['23d--1', '23d--2']:
-                accurate_name_dict[name] = '23d'
-            if name in ['5mv--1', '5mv--2']:
-                accurate_name_dict[name] = '5mv'
-            if name in ['p47r--1', 'p47r--2']:
-                accurate_name_dict[name] = 'p47r'
-            if name in ['a47r--1', 'a47r--2']:
-                accurate_name_dict[name] = 'a47r'
-            if name in ['AAIC--1', 'AAIC--2']:
-                accurate_name_dict[name] = 'AAIC'
-            if name in ['Pir--1', 'Pir--2']:
-                accurate_name_dict[name] = 'Pir'
-            if name in ['OFC--1', 'OFC--2']:
-                accurate_name_dict[name] = 'OFC'
-            if name in ['pOFC--1', 'pOFC--2']:
-                accurate_name_dict[name] = 'pOFC'
-            if name in ['PoI1--1', 'PoI1--2']:
-                accurate_name_dict[name] = 'PoI1'
-            if name in ['PoI2--1', 'PoI2--2']:
-                accurate_name_dict[name] = 'PoI2'
-            if name in ['PreS--1', 'PreS--2']:
-                accurate_name_dict[name] = 'PreS'
-            if name in ['ProS--1', 'ProS--2']:
-                accurate_name_dict[name] = 'ProS'
-            if name in ['RSC--1', 'RSC--2']:
-                accurate_name_dict[name] = 'RSC'
-        name2namelist_dict = {}
-        for name in source_name:
-            name2namelist_dict[name] = [name]
+        for name in full_split_name:
+            split_name_to_name_dict[name] = name
+            if name in ['11--1', '11--2']:
+                split_name_to_name_dict[name] = '11'
+            if name in ['43--1', '43--2']:
+                split_name_to_name_dict[name] = '43'
+            if name in ['77--1', '77--2']:
+                split_name_to_name_dict[name] = '77'
+
+    if animal_and_dataset_key == 'mouse_gamanut':
+        for name in full_name:
+            name_to_split_name_dict[name] = [name]
+
+        full_split_name = get_full_split_name(name_to_split_name_dict)
+
+        for name in full_split_name:
+            split_name_to_name_dict[name] = name
+
+    if animal_and_dataset_key == 'human_lariviere':
+        for name in full_name:
             if name in ['10pp']:
-                name2namelist_dict[name] = ['10pp--1', '10pp--2']
+                name_to_split_name_dict[name] = ['10pp--1', '10pp--2']
             if name in ['23c']:
-                name2namelist_dict[name] = ['23c--1', '23c--2']
+                name_to_split_name_dict[name] = ['23c--1', '23c--2']
             if name in ['23d']:
-                name2namelist_dict[name] = ['23d--1', '23d--2']
+                name_to_split_name_dict[name] = ['23d--1', '23d--2']
             if name in ['5mv']:
-                name2namelist_dict[name] = ['5mv--1', '5mv--2']
+                name_to_split_name_dict[name] = ['5mv--1', '5mv--2']
             if name in ['a47r']:
-                name2namelist_dict[name] = ['a47r--1', 'a47r--2']
+                name_to_split_name_dict[name] = ['a47r--1', 'a47r--2']
             if name in ['p47r']:
-                name2namelist_dict[name] = ['p47r--1', 'p47r--2']
+                name_to_split_name_dict[name] = ['p47r--1', 'p47r--2']
             if name in ['AAIC']:
-                name2namelist_dict[name] = ['AAIC--1', 'AAIC--2']
+                name_to_split_name_dict[name] = ['AAIC--1', 'AAIC--2']
             if name in ['Pir']:
-                name2namelist_dict[name] = ['Pir--1', 'Pir--2']
+                name_to_split_name_dict[name] = ['Pir--1', 'Pir--2']
             if name in ['OFC']:
-                name2namelist_dict[name] = ['OFC--1', 'OFC--2']
+                name_to_split_name_dict[name] = ['OFC--1', 'OFC--2']
             if name in ['pOFC']:
-                name2namelist_dict[name] = ['pOFC--1', 'pOFC--2']
+                name_to_split_name_dict[name] = ['pOFC--1', 'pOFC--2']
             if name in ['PoI1']:
-                name2namelist_dict[name] = ['PoI1--1', 'PoI1--2']
+                name_to_split_name_dict[name] = ['PoI1--1', 'PoI1--2']
             if name in ['PoI2']:
-                name2namelist_dict[name] = ['PoI2--1', 'PoI2--2']
+                name_to_split_name_dict[name] = ['PoI2--1', 'PoI2--2']
             if name in ['PreS']:
-                name2namelist_dict[name] = ['PreS--1', 'PreS--2']
+                name_to_split_name_dict[name] = ['PreS--1', 'PreS--2']
             if name in ['ProS']:
-                name2namelist_dict[name] = ['ProS--1', 'ProS--2']
+                name_to_split_name_dict[name] = ['ProS--1', 'ProS--2']
             if name in ['RSC']:
-                name2namelist_dict[name] = ['RSC--1', 'RSC--2']
+                name_to_split_name_dict[name] = ['RSC--1', 'RSC--2']
 
-    if len(source_name)>len(target_name):
-        full_name = source_name.copy()
-    else:
-        full_name = target_name.copy()
+        full_split_name = get_full_split_name(name_to_split_name_dict)
 
-    results = {'target_name': target_name, 'source_name': source_name, 'full_name': full_name, 'full_split_name': full_split_name, 'name_to_split_name_dict': name_to_split_name_dict, 'split_name_to_name_dict': split_name_to_name_dict}
-    return results
+        for name in full_split_name:
+            if name in ['10pp--1', '10pp--2']:
+                split_name_to_name_dict[name] = '10pp'
+            if name in ['23c--1', '23c--2']:
+                split_name_to_name_dict[name] = '23c'
+            if name in ['23d--1', '23d--2']:
+                split_name_to_name_dict[name] = '23d'
+            if name in ['5mv--1', '5mv--2']:
+                split_name_to_name_dict[name] = '5mv'
+            if name in ['p47r--1', 'p47r--2']:
+                split_name_to_name_dict[name] = 'p47r'
+            if name in ['a47r--1', 'a47r--2']:
+                split_name_to_name_dict[name] = 'a47r'
+            if name in ['AAIC--1', 'AAIC--2']:
+                split_name_to_name_dict[name] = 'AAIC'
+            if name in ['Pir--1', 'Pir--2']:
+                split_name_to_name_dict[name] = 'Pir'
+            if name in ['OFC--1', 'OFC--2']:
+                split_name_to_name_dict[name] = 'OFC'
+            if name in ['pOFC--1', 'pOFC--2']:
+                split_name_to_name_dict[name] = 'pOFC'
+            if name in ['PoI1--1', 'PoI1--2']:
+                split_name_to_name_dict[name] = 'PoI1'
+            if name in ['PoI2--1', 'PoI2--2']:
+                split_name_to_name_dict[name] = 'PoI2'
+            if name in ['PreS--1', 'PreS--2']:
+                split_name_to_name_dict[name] = 'PreS'
+            if name in ['ProS--1', 'ProS--2']:
+                split_name_to_name_dict[name] = 'ProS'
+            if name in ['RSC--1', 'RSC--2']:
+                split_name_to_name_dict[name] = 'RSC'
+
+    name_dict = {'target_name': target_name, 'source_name': source_name, 'full_name': full_name, 'full_split_name': full_split_name, 'name_to_split_name_dict': name_to_split_name_dict, 'split_name_to_name_dict': split_name_to_name_dict}
+    return name_dict
 
 
 def load_category_dict(animal, dataset_key, category_mode):
@@ -2092,6 +2119,25 @@ def data_model_correlation(SC_data, SC_model, animal, dataset_key, diagonal=Fals
     return corr
 
 
+def area_level_correlation(SC_data, SC_model, animal, dataset_key, diagonal=False):
+    animal_info = AnimalInfo(animal, dataset_key)
+    target_name = animal_info.target_name
+    source_name = animal_info.source_name
+    SC_focus_direction = animal_info.SC_focus_direction
+    corr_dict = {}
+    if SC_focus_direction == 'col':
+        for target in target_name:
+            SC_data_target = cf.get_sub_df(df=SC_data, row_list=source_name, col_list=[target])
+            SC_model_target = cf.get_sub_df(df=SC_model, row_list=source_name, col_list=[target])
+            corr_dict[target] = cf.get_pd_rectangle_corr(SC_data_target, SC_model_target, diagonal=diagonal)
+    elif SC_focus_direction == 'row':
+        for source in source_name:
+            SC_data_source = cf.get_sub_df(df=SC_data, row_list=[source], col_list=target_name)
+            SC_model_source = cf.get_sub_df(df=SC_model, row_list=[source], col_list=target_name)
+            corr_dict[source] = cf.get_pd_rectangle_corr(SC_data_source, SC_model_source, diagonal=diagonal)
+    return corr_dict
+
+
 def get_rm_longrange_correlation_change(SC_data, SC_model, distance_matrix, animal, dataset_key, point_num=100, rm_mode='data'):
     max_distance = np.nanmax(distance_matrix.values)
     corr_list = []
@@ -2142,9 +2188,13 @@ def show_value_on_flatmap(ax, animal, dataset_key, value_dict, cmap, cbar_label=
     if target is not None:
         mask = assign_value_to_split_area(mask, key=target, value=True, animal=animal, dataset_key=dataset_key)
         mask_color = TARGET_COLOR
+        mask_tick = 'target'
+        cbar_kwargs = cf.update_dict(cbar_kwargs, {'mask_tick': mask_tick})
     if source is not None:
         mask = assign_value_to_split_area(mask, key=source, value=True, animal=animal, dataset_key=dataset_key)
         mask_color = SOURCE_COLOR
+        mask_tick = 'source'
+        cbar_kwargs = cf.update_dict(cbar_kwargs, {'mask_tick': mask_tick})
     cf.plt_polygon_heatmap(ax, xy_dict=coords_dict, value_dict=split_value_dict, mask=mask, mask_color=mask_color, cbar_label=cbar_label, cmap=cmap, norm_mode=norm_mode, vmin=vmin, vmax=vmax, norm_kwargs=norm_kwargs, edgecolor=edgecolor, cbar=cbar, cbar_position=cbar_position, fill=fill, adjust_lim=adjust_lim, polygon_kwargs=polygon_kwargs, cbar_kwargs=cbar_kwargs)
 
     if show_area_name:
@@ -2259,7 +2309,7 @@ def visualize_connection_matrix_heatmap(ax_data, ax_model, matrix_data, matrix_m
     draw_rectangle_for_connection_matrix(ax_data, animal=animal, dataset_key=dataset_key)
     draw_rectangle_for_connection_matrix(ax_model, animal=animal, dataset_key=dataset_key)
 
-    cf.set_ax(ax_data, title=animal+'\nData', xlabel='Target', ylabel='Source')
+    cf.set_ax(ax_data, title='Data', xlabel='Target', ylabel='Source')
     cf.set_ax(ax_model, title='Model', xlabel='Target', ylabel='Source')
 
     corr = data_model_correlation(SC_data=matrix_data, SC_model=matrix_model, animal=animal, dataset_key=dataset_key, diagonal=False)
@@ -2276,7 +2326,8 @@ def visualize_distribution_scaled_by_SC(ax, some_property, SC, minimal_tol=None,
     if distribution_type == 'CDF':
         cf.plt_cdf(ax, repeated_property, **distribution_kwargs)
     elif distribution_type == 'hist':
-        cf.plt_hist(ax, repeated_property, **distribution_kwargs)
+        plt_hist_instance = cf.PltHist(ax, repeated_property, **distribution_kwargs)
+        return plt_hist_instance
 
 
 def visualize_data_model_distribution_scaled_by_SC(ax, some_property, SC_data, SC_model, minimal_tol=None, distribution_type='CDF', distribution_kwargs=None):
@@ -2289,7 +2340,7 @@ def visualize_data_model_distribution_scaled_by_SC(ax, some_property, SC_data, S
     repeated_property_model = cf.repeat_data(some_property, SC_model_int)
     distribution_kwargs = cf.update_dict({}, distribution_kwargs)
     if distribution_type == 'CDF':
-        cf.plt_compare_cdf_ks(ax, data1=repeated_property_data, data2=repeated_property_model, label1='data', label2='model', **distribution_kwargs)
+        cf.plt_compare_cdf_ks(ax, data1=repeated_property_data, data2=repeated_property_model, color1=DATA_COLOR, color2=MODEL_COLOR, label1='data', label2='model', **distribution_kwargs)
     elif distribution_type == 'hist':
         pass
 
@@ -2297,172 +2348,6 @@ def visualize_data_model_distribution_scaled_by_SC(ax, some_property, SC_data, S
 def visualize_intrinsic_proportion():
     pass
 
-# region previous
-# class SingleVisualizer:
-#     '''
-#     进行单个动物的可视化
-#     '''
-#     def __init__(self, animal, dataset_key, model_timedir):
-#         self.animal = animal
-#         self.dataset_key = dataset_key
-#         self.animal_info = AnimalInfo(animal, dataset_key)
-#         self.SC_data = self.animal_info.SC_data
-#         self.model_timedir = model_timedir
-#         self.minimal_tol = 1e-3 # 后续改成高精度
-#         self.bin_num = 20
-
-#         self.axon_growth_model = AxonGrowthModelLoader(animal, dataset_key, model_timedir)
-#         self.SC_model = self.axon_growth_model.get_suitable_SC_model()
-
-#     def connection_on_flatmap(self, ax):
-#         pass
-
-#     def vector_field(self, ax):
-#         pass
-
-#     def model_data_SC(self, ax_model, ax_data):
-#         visualize_connection_matrix_heatmap(ax_data, ax_model, matrix_data=self.SC_data, matrix_model=self.SC_model, animal=self.animal, dataset_key=self.dataset_key, log_matrix=False, topo=False)
-
-#     def area_level_performance(self, ax, performance_metric='correlation'):
-#         pass
-
-#     def distance_distribution(self, ax, data_or_model, dim='2D'):
-#         if dim == '2D':
-#             distance_matrix = self.animal_info.distance_2D
-#         elif dim == '3D':
-#             distance_matrix = self.animal_info.distance_3D
-        
-#         if data_or_model == 'model':
-#             SC = self.SC_model
-#         elif data_or_model == 'data':
-#             SC = self.SC_data
-
-#         visualize_distribution_scaled_by_SC(ax, distance_matrix, SC, minimal_tol=self.minimal_tol, distribution_type='hist', distribution_kwargs=None)
-
-#     def angle_distribution(self, ax, data_or_model, dim='2D'):
-#         if data_or_model == 'model':
-#             SC = self.SC_model
-#         elif data_or_model == 'data':
-#             SC = self.SC_data
-
-#         if dim == '2D':
-#             angle_matrix = self.animal_info.angle_2D
-#             visualize_distribution_scaled_by_SC(ax, angle_matrix, SC, minimal_tol=self.minimal_tol, distribution_type='CDF', distribution_kwargs=None)
-#         elif dim == '3D':
-#             angle_3D_dict = self.animal_info.angle_3D
-#             azim_matrix = angle_3D_dict['azim_matrix']
-#             elev_matrix = angle_3D_dict['elev_matrix']
-
-#     def SC_distance_scatter(self, ax, dim='2D'):
-#         pass
-
-#     def SC_distribution(self, ax, log_transform=True):
-#         pass
-
-#     def retrograde_neuron(self, ax):
-#         pass
-
-#     def rm_long_range_correlation_change(self, ax, rm_mode='data'):
-#         pass
-
-#     def category_long_range_proportion(self, ax):
-#         pass
-
-
-# class MultipleVisualizer:
-#     '''
-#     进行多个动物的可视化
-#     '''
-#     def __init__(self, animal_list, dataset_key_list, model_timedir_list):
-#         self.animal_list = animal_list
-#         self.dataset_key_list = dataset_key_list
-#         self.model_timedir_list = model_timedir_list
-#         self.animal_num = len(self.animal_list)
-#         self.animal_and_dataset_key_list = [cf.cat(animal, dataset_key) for animal, dataset_key in zip(self.animal_list, self.dataset_key_list)]
-
-#     def get_fig_ax(self, nrows, separate=False, **kwargs):
-#         '''
-#         获取fig和ax
-
-#         separate: True,则每个动物一个fig;False,则所有动物一个fig,但是每个动物一个subfig
-#         '''
-#         self.nrows = nrows
-#         self.separate = separate
-#         self.subfig_dict = {}
-#         self.ax_dict = {}
-#         if separate:
-#             for animal_and_dataset_key in self.animal_and_dataset_key_list:
-#                 self.subfig_dict[animal_and_dataset_key], self.ax_dict[animal_and_dataset_key] = cf.gfa(ncols=1, nrows=nrows, **kwargs)
-#         else:
-#             fig, subfig = cf.get_fig_subfig()
-#             for i, animal_and_dataset_key in enumerate(self.animal_and_dataset_key_list):
-#                 self.fig_dict[animal_and_dataset_key] = fig
-#                 self.ax_dict[animal_and_dataset_key] = ax_dict[:, i]
-#         # ax_array是将ax_dict中的ax按照顺序排列成一个二维数组
-#         self.ax_array = np.empty((nrows, self.animal_num), dtype=object)
-#         for i, animal_and_dataset_key in enumerate(self.animal_and_dataset_key_list):
-#             self.ax_array[:, i] = self.ax_dict[animal_and_dataset_key]
-#         return self.fig_dict, self.ax_dict
-
-#     def add_tag(self):
-#         '''
-#         添加tag
-#         '''
-#         if self.separate:
-#             for k, ax in self.ax_dict:
-#                 cf.add_axes_list_tag_by_order(ax)
-#         else:
-#             cf.add_axes_list_tag_by_order(self.ax_array.flatten())
-
-#     def add_animal_name_on_first_row(self):
-#         '''
-#         在第一行添加动物名
-#         '''
-#         for i, animal in enumerate(self.animal_list):
-#             cf.add_text(self.ax_array[0, i], x=0.5, y=1.1, text=animal, va='center', ha='center')
-    
-#     def rm_redundant_ylabel(self):
-#         '''
-#         去掉多余的y标签
-#         '''
-#         if self.separate:
-#             pass
-#         else:
-#             for col in range(1, self.animal_num):
-#                 for row in range(self.nrows):
-#                     cf.rm_ax_ticklabel(self.ax_array[row, col], axis='y')
-
-#     def add_rounded_rectangle():
-#         pass
-
-#     def multi_ax_plot(self, func_list, kwargs_list):
-#         '''
-#         在多个ax上作图
-#         '''
-#         for func, kwargs in zip(func_list, kwargs_list):
-#             func(**kwargs)
-    
-#     def multi_ax_plot_by_single_visualizer(self, func_name, kwargs_list):
-#         '''
-#         通过SingleVisualizer的方法在多个ax上作图
-#         '''
-#         single_visualizer_list = [SingleVisualizer(animal, dataset_key, model_timedir) for animal, dataset_key, model_timedir in zip(self.animal_list, self.dataset_key_list, self.model_timedir_list)]
-#         func_list = [getattr(single_visualizer, func_name) for single_visualizer in single_visualizer_list]
-#         self.multi_ax_plot(func_list, kwargs_list)
-
-#     def save_fig(self, filename, **kwargs):
-#         '''
-#         保存fig
-#         '''
-#         if self.separate:
-#             for animal_and_dataset_key in self.animal_and_dataset_key_list:
-#                 cf.save_fig(self.fig_dict[animal_and_dataset_key], filename+'_'+animal_and_dataset_key, formats=['pdf', 'png'], **kwargs)
-#         else:
-#             # 从fig_dict中获取一个任意的fig保存
-#             for animal_and_dataset_key in self.animal_and_dataset_key_list:
-#                 cf.save_fig(self.fig_dict[animal_and_dataset_key], filename, formats=['pdf', 'png'], **kwargs)
-#                 break
-# endregion
 
 class SingleCaseVisualizer(cf.SingleVisualizer):
     '''
@@ -2476,14 +2361,38 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         self.SC_data = self.animal_info.SC_data
         self.model_timedir = model_timedir
         self.minimal_tol = 1e-3 # 后续改成高精度
-        self.bin_num = 20
+        self.bin_num = cf.BIN_NUM
 
         self.axon_growth_model = AxonGrowthModelLoader(animal, dataset_key, model_timedir)
         self.SC_model = self.axon_growth_model.get_suitable_SC_model()
         self.SC_model_masked = self.axon_growth_model.get_suitable_SC_model_masked_as_data()
 
-    def connection_on_flatmap(self, ax):
-        pass
+    def connection_on_flatmap(self, ax, data_or_model, which_area, show_value_on_flatmap_kwargs=None):
+        if data_or_model == 'model':
+            SC = self.SC_model_masked
+        elif data_or_model == 'data':
+            SC = self.SC_data
+        vmax = self.animal_info.connection_matrix_vmax
+
+        show_value_on_flatmap_kwargs = cf.update_dict({}, show_value_on_flatmap_kwargs)
+
+        value_dict = {}
+        target = None
+        source = None
+        vmax = self.animal_info.connection_matrix_vmax
+        if self.animal_info.SC_focus_direction == 'col':
+            target = which_area
+            cmap = cf.get_cmap([cf.TRANSPARENT, SOURCE_COLOR])
+            for s in self.animal_info.source_name:
+                value_dict[s] = SC.loc[s, which_area]
+        elif self.animal_info.SC_focus_direction == 'row':
+            source = which_area
+            cmap = cf.get_cmap([cf.TRANSPARENT, TARGET_COLOR])
+            for t in self.animal_info.target_name:
+                value_dict[t] = SC.loc[which_area, t]
+        
+        show_value_on_flatmap(ax, animal=self.animal, dataset_key=self.dataset_key, value_dict=value_dict, cmap=cmap, cbar_label='SC', source=source, target=target, vmax=vmax, **show_value_on_flatmap_kwargs)
+        cf.set_ax(ax, title=data_or_model+'\n'+which_area)
 
     def vector_field(self, ax):
         pass
@@ -2491,10 +2400,24 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
     def data_model_SC(self, ax_model, ax_data):
         visualize_connection_matrix_heatmap(ax_data, ax_model, matrix_data=self.SC_data, matrix_model=self.SC_model, animal=self.animal, dataset_key=self.dataset_key, log_matrix=False, topo=False)
 
-    def area_level_performance(self, ax, performance_metric='correlation'):
-        pass
+    def area_level_performance(self, ax, performance_metric='correlation', sort=True, SC_dict_key=None):
+        if SC_dict_key is None:
+            SC_data = self.SC_data
+            SC_model = self.SC_model
+        else:
+            # SC_data还没写
+            SC_model = self.axon_growth_model.SC_model_dict[SC_dict_key]
+        if performance_metric == 'correlation':
+            performance_dict = area_level_correlation(SC_data=SC_data, SC_model=SC_model, animal=self.animal, dataset_key=self.dataset_key, diagonal=False)
+        else:
+            raise ValueError(f'performance_metric {performance_metric} is not supported')
+        if sort:
+            performance_dict = cf.sort_dict(performance_dict, reverse=True)
+        cf.plt_bar_dict(ax, data=performance_dict, color=cf.BLUE)
+        cf.add_hline(ax, y=np.nanmean(list(performance_dict.values())), color=cf.GREEN, linestyle='--', label='mean')
+        cf.set_ax(ax, xlabel='Area', ylabel=performance_metric, xtick_rotation=90)
 
-    def distance_distribution(self, ax, data_or_model, dim='2D'):
+    def distance_distribution(self, ax, data_or_model, dim='2D', distribution_kwargs=None, linregress=False, linregress_kwargs=None):
         if dim == '2D':
             distance_matrix = self.animal_info.distance_2D
         elif dim == '3D':
@@ -2502,21 +2425,39 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         
         if data_or_model == 'model':
             SC = self.SC_model_masked
+            color = MODEL_COLOR
         elif data_or_model == 'data':
             SC = self.SC_data
+            color = DATA_COLOR
 
-        visualize_distribution_scaled_by_SC(ax, distance_matrix, SC, minimal_tol=self.minimal_tol, distribution_type='hist', distribution_kwargs=None)
-        cf.set_ax(ax, xlabel=f'Distance {dim} (mm)', ylog=True)
+        distribution_kwargs = cf.update_dict({'color': color}, distribution_kwargs)
 
-    def angle_distribution(self, ax, data_or_model, dim='2D'):
+        plt_hist_instance = visualize_distribution_scaled_by_SC(ax, distance_matrix, SC, minimal_tol=self.minimal_tol, distribution_type='hist', distribution_kwargs=distribution_kwargs)
+        if linregress:
+            linregress_kwargs = cf.update_dict({}, linregress_kwargs)
+
+            hist = plt_hist_instance.hist
+            mid_point = plt_hist_instance.mid_point
+            regress_dict = cf.plt_linregress(ax, x=mid_point, y=hist, ylog=True, line_color=cf.BLACK, show_scatter=False, show_list=[], **linregress_kwargs)
+            regress_dict['Lambda'] = -1 / (regress_dict['slope'] * np.log(10)) # transform to e base to get lambda
+            unit_dict = cf.create_dict(keys=regress_dict.keys(), default_value=None)
+            unit_dict['Lambda'] = 'mm'
+            cf.add_text_by_dict(ax, regress_dict, show_list=['p', 'Lambda'], unit_dict=unit_dict, text_x=0.6, text_y=0.9)
+        cf.set_ax(ax, xlabel=f'Distance {dim} (mm)', ylog=True, title=data_or_model)
+
+    def angle_distribution(self, ax, data_or_model, dim='2D', distribution_kwargs=None):
         if data_or_model == 'model':
             SC = self.SC_model_masked
+            color = MODEL_COLOR
         elif data_or_model == 'data':
             SC = self.SC_data
+            color = DATA_COLOR
+
+        distribution_kwargs = cf.update_dict({'color': color}, distribution_kwargs)
 
         if dim == '2D':
             angle_matrix = self.animal_info.angle_2D
-            visualize_distribution_scaled_by_SC(ax, angle_matrix, SC, minimal_tol=self.minimal_tol, distribution_type='CDF', distribution_kwargs=None)
+            visualize_distribution_scaled_by_SC(ax, angle_matrix, SC, minimal_tol=self.minimal_tol, distribution_type='CDF', distribution_kwargs=distribution_kwargs)
             cf.set_ax(ax, xlabel='Angle', ylabel='CDF')
         elif dim == '3D':
             angle_3D_dict = self.animal_info.angle_3D
@@ -2533,7 +2474,7 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
             azim_matrix = angle_3D_dict['azim_matrix']
             elev_matrix = angle_3D_dict['elev_matrix']
 
-    def SC_distance_scatter(self, ax, data_or_model, dim='2D'):
+    def distance_SC_scatter(self, ax, data_or_model, dim='2D'):
         if dim == '2D':
             distance_matrix = self.animal_info.distance_2D
         elif dim == '3D':
@@ -2543,13 +2484,34 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
             SC = self.SC_model_masked
         elif data_or_model == 'data':
             SC = self.SC_data
+
+        cmap = plt.cm.coolwarm
         
+        flatten_distance = distance_matrix.values.flatten()
+
         SC_logged = log_SC(SC, self.animal, self.dataset_key, apply_c=False, apply_w=False)
-        cf.plt_density_scatter(ax, distance_matrix, SC)
+        flatten_SC_logged = SC_logged.values.flatten()
 
+        flatten_distance, flatten_SC_logged = cf.sync_special_value(flatten_distance, flatten_SC_logged)
 
-    def SC_distribution(self, ax, log_transform=True):
-        pass
+        flatten_distance = cf.process_nan(flatten_distance, nan_policy='drop')
+        flatten_SC_logged = cf.process_nan(flatten_SC_logged, nan_policy='drop')
+
+        cf.plt_density_scatter(ax, flatten_distance, flatten_SC_logged, cmap=cmap, cbar_kwargs={'ticks': []})
+        cf.set_ax(ax, xlabel=f'Distance {dim} (mm)', ylabel='log(SC)', title=data_or_model)
+
+    def SC_distribution(self, ax, data_or_model, log_scale=True, distribution_kwargs=None):
+        if data_or_model == 'model':
+            SC = self.SC_model_masked
+            color = MODEL_COLOR
+        elif data_or_model == 'data':
+            SC = self.SC_data
+            color = DATA_COLOR
+
+        distribution_kwargs = cf.update_dict({'color': color}, distribution_kwargs)
+
+        cf.sns_hist(ax, data=SC.values.flatten(), bins=self.bin_num, log_scale=log_scale, **distribution_kwargs)
+        cf.set_ax(ax, xlabel='SC', title=data_or_model)
 
     def retrograde_neuron(self, ax):
         pass
@@ -2588,12 +2550,12 @@ class MultiCaseVisualizer(cf.MultiVisualizerByCol):
         self.single_visualizer_list = [SingleCaseVisualizer(animal, dataset_key, model_timedir) for animal, dataset_key, model_timedir in zip(self.animal_list, self.dataset_key_list, self.model_timedir_list)]
         super().__init__(self.single_visualizer_list)
     
-    def add_subfig_title(self):
+    def add_subfig_title(self, **kwargs):
         '''
         只show动物名
         '''
         for animal, dataset_key in zip(self.animal_list, self.dataset_key_list):
-            cf.set_fig_title(self.subfig_dict[cf.cat(animal, dataset_key)], title=animal)
+            cf.set_fig_title(self.subfig_dict[cf.cat(animal, dataset_key)], title=animal, **kwargs)
 
 
 class PaperFig:
@@ -2696,7 +2658,7 @@ class PaperFig:
             kwargs_list.append({'ax_data': ax[0], 'ax_model': ax[1]})
         self.multi_visualizer.multi_ax_plot_by_single_visualizer('data_model_SC', kwargs_list)
         self.multi_visualizer.add_tag()
-        self.multi_visualizer.add_subfig_title()
+        self.multi_visualizer.add_subfig_title(y=1.0)
         self.multi_visualizer.rm_redundant_xylabel()
         self.multi_visualizer.save_fig(self.figdir+'/fig2')
 
@@ -2711,7 +2673,7 @@ class PaperFig:
         distance_kwargs_list = []
         for title, ax in ax_dict.items():
             angle_kwargs_list.append({'ax': ax[0], 'dim': '2D'})
-            distance_kwargs_list.append({'ax': ax[1], 'data_or_model': 'data', 'dim': '2D'})
+            distance_kwargs_list.append({'ax': ax[1], 'data_or_model': 'data', 'dim': '2D', 'linregress': True})
         self.multi_visualizer.multi_ax_plot_by_single_visualizer('data_model_angle_distribution', angle_kwargs_list)
         self.multi_visualizer.multi_ax_plot_by_single_visualizer('distance_distribution', distance_kwargs_list)
         self.multi_visualizer.add_tag()
@@ -2723,11 +2685,87 @@ class PaperFig:
         '''
         marmoset
         '''
+        animal = 'marmoset'
+        dataset_key = 'majka'
+        animal_info = AnimalInfo(animal, dataset_key)
+        single_visualizer = self.multi_visualizer.get_single_visualizer(cf.cat(animal, dataset_key))
+
+        fig, ax = cf.get_fig_ax(nrows=2, ncols=4)
+
+        ax_dict = {}
+        ax_dict['a'] = cf.merge_ax(ax[0, 0:2])
+        ax_dict['b'] = cf.merge_ax(ax[0, 2])
+        ax_dict['c'] = cf.merge_ax(ax[0, 3])
+        ax_dict['d'] = cf.merge_ax(ax[1, 0])
+        ax_dict['e'] = cf.merge_ax(ax[1, 1])
+        ax_dict['f'] = cf.merge_ax(ax[1, 2])
+        ax_dict['g'] = cf.merge_ax(ax[1, 3])
+
+        cf.add_axes_dict_tag(axes_dict=ax_dict, ref_ax=ax[0, 0])
+
+        ax = ax_dict['a']
+
+        ax = ax_dict['b']
+        single_visualizer.SC_distribution(ax, data_or_model='data', log_scale=True)
+
+        ax = ax_dict['c']
+        single_visualizer.SC_distribution(ax, data_or_model='model', log_scale=True)
+        ax.set_ylabel('')
+
+        ax = ax_dict['d']
+        single_visualizer.distance_SC_scatter(ax, data_or_model='data', dim='2D')
+
+        ax = ax_dict['e']
+        single_visualizer.distance_SC_scatter(ax, data_or_model='model', dim='2D')
+        ax.set_ylabel('')
+
+        ax = ax_dict['f']
+        single_visualizer.distance_distribution(ax, data_or_model='data', dim='2D')
+
+        ax = ax_dict['g']
+        single_visualizer.distance_distribution(ax, data_or_model='model', dim='2D')
+        ax.set_ylabel('')
+
+        cf.save_fig(fig, self.figdir+'/fig4', **self.save_fig_kwargs)
 
     def fig_5(self):
         '''
         marmoset area level performance and retrograde
         '''
+        animal = 'marmoset'
+        dataset_key = 'majka'
+        animal_info = AnimalInfo(animal, dataset_key)
+        single_visualizer = self.multi_visualizer.get_single_visualizer(cf.cat(animal, dataset_key))
+
+        fig, ax = cf.get_fig_ax(nrows=2, ncols=4)
+
+        ax_dict = {}
+        ax_dict['a'] = cf.merge_ax(ax[0, 0:2])
+        ax_dict['b'] = cf.merge_ax(ax[1, 0:2])
+        ax_dict['c'] = cf.merge_ax(ax[0, 2])
+        ax_dict['d'] = cf.merge_ax(ax[0, 3])
+        ax_dict['e'] = cf.merge_ax(ax[1, 2])
+        ax_dict['f'] = cf.merge_ax(ax[1, 3])
+
+        cf.add_axes_dict_tag(axes_dict=ax_dict, ref_ax=ax[0, 0])
+
+        ax = ax_dict['a']
+        single_visualizer.area_level_performance(ax, performance_metric='correlation', sort=True)
+
+        ax = ax_dict['b']
+
+        ax = ax_dict['c']
+        single_visualizer.connection_on_flatmap(ax, data_or_model='data', which_area='A1-2')
+
+        ax = ax_dict['d']
+        single_visualizer.connection_on_flatmap(ax, data_or_model='model', which_area='A1-2')
+
+        ax = ax_dict['e']
+
+        ax = ax_dict['f']
+
+        cf.save_fig(fig, self.figdir+'/fig5', **self.save_fig_kwargs)
+
 
     def fig_6(self):
         '''
