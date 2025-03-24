@@ -29,6 +29,7 @@ import logging
 from cProfile import Profile
 from pstats import Stats
 import tracemalloc
+from collections import defaultdict
 
 
 # 数学和科学计算库
@@ -215,6 +216,40 @@ def generate_distance_matrix(animal, dataset_key, dim='2D'):
     else:
         raise NotImplementedError
     return distance_matrix
+
+
+def generate_clean_area_category(animal, dataset_key):
+    '''
+    生成area的category数据,整理成一样的格式
+    '''
+    animal_info = AnimalInfo(animal, dataset_key)
+    area_category = cf.load_df(animal_info.raw_area_category_dir + 'area_category')
+    clean_area_category = {}
+    if animal_info.animal_and_dataset_key == 'marmoset_majka':
+        category_map = {'Dorsolateral prefrontal': 'prefrontal', 'Ventrolateral prefrontal': 'prefrontal', 'Orbitofrontal': 'prefrontal', 'Medial prefrontal': 'prefrontal', 'Premotor/motor': 'frontal', 'Anterior cingulated': 'prefrontal', 'Somatosensory': 'parietal', 'Insular': 'insular', 'Auditory': 'temporal', 'Lateral and inferior temporal': '', 'Ventral temporal': 'temporal', 'Posterior parietal': 'parietal', 'Posterior cingulate and retrosplenial': '', 'Visual': 'Occipital', 'Olfactory cortex': ''}
+        for area, row in area_category.iterrows():
+            clean_area_category[area] = category_map[row['area_type']]
+    else:
+        raise NotImplementedError
+    return clean_area_category
+
+
+def generate_intrinsic_proportion(animal, datasetkey):
+    '''
+    生成intrinsic_proportion数据
+    '''
+    animal_info = AnimalInfo(animal, datasetkey)
+    intrinsic_proportion_dict = defaultdict(list)
+    if animal_info.animal_and_dataset_key == 'marmoset_majka':
+        SI_table_3 = cf.load_df(animal_info.raw_data_dir + 'SI_table_3')
+        for _, row in SI_table_3.iterrows():
+            area = row['Area']
+            intrinsic_proportion_dict[area].append(row['Intrinsic'] / row['Total'])
+    else:
+        raise NotImplementedError
+    intrinsic_proportion_dict = {k: np.mean(v) for k, v in intrinsic_proportion_dict.items()}
+    cf.save_dict(intrinsic_proportion_dict, animal_info.intrinsic_proportion_dir + 'intrinsic_proportion_dict')
+    return intrinsic_proportion_dict
 # endregion
 
 
@@ -225,16 +260,20 @@ class AnimalDir:
         self.dataset_key = dataset_key
         self.animal_and_dataset_key = str(animal) + '_' + str(dataset_key)
 
-        # 数据目录
+        # 原始数据目录
         self.raw_data_dir = '../../raw_data/' + self.animal_and_dataset_key + '/'
         self.data_dir = '../../data/' + self.animal_and_dataset_key + '/'
         self.raw_area_coords_dir = self.raw_data_dir + 'area_coords/'
         self.raw_whole_cortex_coords_dir = self.raw_data_dir + 'whole_cortex_coords/'
+        self.raw_area_category_dir = self.raw_data_dir + 'area_category/'
+
+        # 处理后的数据目录
         self.area_coords_dir = self.data_dir + 'area_coords/'
         self.whole_cortex_coords_dir = self.data_dir + 'whole_cortex_coords/'
         self.distance_matrix_dir = self.data_dir + 'distance_matrix/'
         self.angle_matrix_dir = self.data_dir + 'angle_matrix/'
         self.SC_dir = self.data_dir + 'SC/'
+        self.intrinsic_proportion_dir = self.data_dir + 'intrinsic_proportion/'
 
         # 结果目录
         self.axon_source_target_dir = 'pass'
@@ -257,6 +296,9 @@ class AnimalInfo(AnimalDir):
         self.full_split_name = name_information['full_split_name']
         self.name_to_split_name_dict = name_information['name_to_split_name_dict']
         self.split_name_to_name_dict = name_information['split_name_to_name_dict']
+
+        self.clustered_source_name, self.clustered_target_name = get_source_target_name_in_clustered_order(self.animal, self.dataset_key)
+
         self.column_mode = 'target' # never be source, this project is always target
 
 
@@ -269,6 +311,13 @@ class AnimalInfo(AnimalDir):
             return prioritize_sublist(self.full_name, self.source_name)
         elif self.SC_focus_direction == 'col':
             return prioritize_sublist(self.full_name, self.target_name)
+
+    @property
+    def reordered_full_name_clustered(self):
+        if self.SC_focus_direction == 'row':
+            return prioritize_sublist(self.full_name, self.clustered_source_name)
+        elif self.SC_focus_direction == 'col':
+            return prioritize_sublist(self.full_name, self.clustered_target_name)
 
     @property
     def coords_dict(self):
@@ -389,11 +438,42 @@ class AnimalInfo(AnimalDir):
         读取SC数据
         '''
         if self.animal_and_dataset_key in ['marmoset_majka', 'macaque_markov40']:
-            SC = load_SC(self.SC_dir + 'SC_data')
+            SC = load_SC(self.animal, self.dataset_key)
+        else:
+            print('not tested')
+        
+        if self.animal_and_dataset_key in ['human_lariviere']:
+            # normalize 使得总和为area_num (对标FLN)
+            SC_sum = SC.sum().sum()
+            SC = SC / SC_sum * SC.shape[0]
+
         # 确保SC按照指定的顺序排列
         SC = cf.reorder_df(SC, new_row=self.full_name, new_col=self.full_name)
         return SC
-        
+    
+    @property
+    def intrinsic_proportion(self):
+        try:
+            return load_intrinsic_proportion(self.animal, self.dataset_key)
+        except:
+            return generate_intrinsic_proportion(self.animal, self.dataset_key)
+    
+    @property
+    def SCt_data(self):
+        '''
+        读取SCt数据(带有对角线)
+        '''
+        if self.animal_and_dataset_key == 'marmoset_majka':
+            SC = self.SC_data.copy()
+            for t in self.target_name:
+                for s in self.source_name:
+                    if s == t:
+                        SC.loc[s, t] = self.intrinsic_proportion[t]
+                    else:
+                        SC.loc[s, t] = SC.loc[s, t] * (1 - self.intrinsic_proportion[t])
+        else:
+            raise NotImplementedError
+
 
 def load_coords_dict(animal, dataset_key):
     '''
@@ -442,13 +522,22 @@ def load_name_location_dict(animal, dataset_key):
     animal_dir = AnimalDir(animal, dataset_key)
     return cf.load_pkl(animal_dir.area_coords_dir + 'name_location_dict')
 
-@cf.message_decorator('pre process SC is not implemented')
-def load_SC(filename):
+
+def load_SC(animal, dataset_key):
     '''
     读取SC的基本数据
     '''
-    SC = cf.load_df(filename)
+    animal_dir = AnimalDir(animal, dataset_key)
+    SC = cf.load_df(animal_dir.SC_dir + 'SC_data')
     return SC
+
+
+def load_intrinsic_proportion(animal, dataset_key):
+    '''
+    读取intrinsic_proportion数据
+    '''
+    animal_dir = AnimalDir(animal, dataset_key)
+    return cf.load_pkl(animal_dir.intrinsic_proportion_dir + 'intrinsic_proportion_dict')
 
 
 def load_angle_matrix(animal, dataset_key, dim='2D'):
@@ -522,6 +611,38 @@ def get_source_target_full_name(animal, dataset_key):
     else:
         full_name = source_name
     return source_name, target_name, full_name
+
+
+def get_source_target_name_in_clustered_order(animal, dataset_key):
+    '''
+    获取source_name, target_name, 按照clustered order
+    '''
+    animal_and_dataset_key = animal + '_' + dataset_key
+    if animal_and_dataset_key == 'mouse_gamanut':
+        clustered_target_name = ['GU', 'SSp-un', 'MOp', 'VISC', 'SSs', 'PL', 'SSp-bfd', 'ACAd', 'RL', 'AL', 'DP', 'AUDpo', 'AM', 'MM', 'V1', 'LM', 'PM', 'P', 'RSPd']
+        clustered_source_name = ['SSp-nm', 'SSp-lj', 'AIv', 'GU', 'AIp', 'FRP', 'SSp-ul', 'AId', 'SSp-un', 'SSp-ll', 'VISC', 'ORBl', 'PL', 'ORBm', 'ILA', 'MOp', 'MOs', 'SSs', 'ACAd', 'SSp-bfd', 'TEa', 'PERI', 'AUDv', 'AUDd', 'SSp-tr', 'ACAv', 'AUDp', 'ECT', 'A', 'RL', 'V1', 'RSPagl', 'TEp', 'RSPd', 'AM', 'RSPv', 'LM', 'MM', 'PM', 'AL', 'LI', 'POR', 'AUDpo', 'DP', 'LLA', 'PORa', 'P']
+
+    if animal_and_dataset_key == 'marmoset_majka':
+        clustered_source_name = ['AuA1', 'AuCPB', 'AuRT', 'AuCM', 'AuML', 'A32', 'A32V', 'A46D', 'A9', 'A45', 'A11', 'A8b', 'PGa-IPa', 'TE3', 'A10', 'TPO', 'PF', 'S2E', 'A6Va', 'A24d', 'A6M', 'A3b', 'A4c', 'PE', 'A1-2', 'A23c', 'A6DC', 'A3a', 'A4ab', 'MIP', 'PEC', 'TEO', 'V1', 'V2', 'V4', 'V4T', 'V3A', 'V6', 'A19DI', 'V5', 'A23b', 'A8aD', 'A8C', 'A6DR', 'A8aV', 'AIP', 'A47L', 'PG', 'A19M', 'PFG', 'MST', 'LIP', 'OPt', 'A23a','PGM', 'AuCL', 'AuRPB', 'STR', 'AuRTM', 'PaIL', 'AuRTL', 'TPro', 'AuR', 'AuAL', 'AuRM', 'APir', 'PaIM', 'TPPro', 'A13b', 'A14R', 'Pir', 'A13a', 'A14C', 'A25', 'A35', 'Ent', 'AI', 'IPro', 'A36', 'TE2', 'TE1', 'OPAl', 'OPro', 'A24a', 'A47O', 'Gu', 'S2PR', 'S2PV', 'A6Vb', 'ProM', 'A31', 'A24b','A24c', 'TPt', 'DI', 'GI', 'ReI', 'S2I', 'A23V', 'ProSt', 'A30', 'A29a-c', 'A29d', 'A46V', 'A13M', 'A13L', 'A47M', 'V6A', 'VIP', 'TFO', 'TF', 'TL', 'TH', 'TLO', 'FST', 'V3']
+        clustered_target_name = ['AuA1', 'AuCPB', 'AuRT', 'AuCM', 'AuML', 'A32', 'A32V', 'A46D', 'A9', 'A45', 'A11', 'A8b', 'PGa-IPa', 'TE3', 'A10', 'TPO', 'PF', 'S2E', 'A6Va', 'A24d', 'A6M', 'A3b', 'A4c', 'PE', 'A1-2', 'A23c', 'A6DC', 'A3a', 'A4ab', 'MIP', 'PEC', 'TEO', 'V1', 'V2', 'V4', 'V4T', 'V3A', 'V6', 'A19DI', 'V5', 'A23b', 'A8aD', 'A8C', 'A6DR', 'A8aV', 'AIP', 'A47L', 'PG', 'A19M', 'PFG', 'MST', 'LIP', 'OPt', 'A23a','PGM']
+
+    if animal_and_dataset_key == 'macaque_markov29':
+        clustered_source_name = ['24c', '25', '32', '23', '24a', '24b', '24d', '2930', '31', 'F1', 'F2', 'F3', 'F4', 'F5', 'F7', 'ProM', 'F6', 'Gu', 'TEO', 'V1', 'V2', 'V4', 'V3', 'V3A', '1', '2', '3', '5', '7A', '7B', '7m', 'DP',  'LIP', 'V6', '7op', 'AIP', 'INSULA', 'MIP', 'Pi', 'PIP', 'SII', 'V6A', 'VIP', '10', '45A', '46d', '8B', '8l', '8m', '9', '946d', '946v', 'OPRO', '11', '12', '13', '14', '44', '45B', '46v', '8r', 'OPAI', 'MT', 'PBr', 'STPc', 'STPi', 'STPr', 'Tepd','CORE', 'ENTORHINAL', 'FST', 'IPa', 'LB', 'MB', 'MST', 'PBc', 'PERIRHINAL', 'PGa', 'PIRIFORM', 'TEMPORAL_POLE', 'Pro.St.', 'SUBICULUM', 'TEama', 'TEamp', 'TEad', 'TEav', 'TEOm', 'TEpv', 'THTF', 'TPt', 'V4t']
+        clustered_target_name = ['24c', 'F1', 'F2', 'F5', 'F7', 'ProM', 'TEO', 'V1', 'V2', 'V4', '2', '5', '7A', '7B', '7m', 'DP', '10', '46d', '8B', '8l', '8m', '946d', '946v', 'MT', 'PBr', 'STPc', 'STPi', 'STPr', 'Tepd']
+
+    if animal_and_dataset_key == 'macaque_markov40':
+        clustered_source_name = ['24c', '25', '32', '23', '24a', '24b', '24d', '2930', '31', 'F1', 'F2', 'F3', 'F4', 'F5', 'F7', 'ProM', 'F6', 'Gu', 'TEO', 'V1', 'V2', 'V4', 'V3', 'V3A', '1', '2', '3', '5', '7A', '7B', '7m', 'DP',  'LIP', 'V6', '7op', 'AIP', 'INSULA', 'MIP', 'Pi', 'PIP', 'SII', 'V6A', 'VIP', '10', '45A', '46d', '8B', '8l', '8m', '9', '946d', '946v', 'OPRO', '11', '12', '13', '14', '44', '45B', '46v', '8r', 'OPAI', 'MT', 'PBr', 'STPc', 'STPi', 'STPr', 'Tepd','CORE', 'ENTORHINAL', 'FST', 'IPa', 'LB', 'MB', 'MST', 'PBc', 'PERIRHINAL', 'PGa', 'PIRIFORM', 'TEMPORAL_POLE', 'Pro.St.', 'SUBICULUM', 'TEama', 'TEamp', 'TEad', 'TEav', 'TEOm', 'TEpv', 'THTF', 'TPt', 'V4t']
+        clustered_target_name = ['24c', '25', '32', 'F1', 'F2', 'F3', 'F4', 'F5', 'F7', 'ProM', 'TEO', 'V1', 'V2', 'V4', '1', '2', '3', '5', '7A', '7B', '7m', 'DP', 'LIP', 'V6', '10', '45A', '46d', '8B', '8l', '8m', '9', '946d', '946v', 'OPRO', 'MT', 'PBr', 'STPc', 'STPi', 'STPr', 'Tepd']
+
+    if animal_and_dataset_key == 'human_lariviere':
+        clustered_source_name = ['V1', 'MST', 'V6', 'V2', 'V3', 'V4', 'V8', '4', '3b', 'FEF', 'PEF', '55b', 'V3A', 'RSC', 'POS2', 'V7', 'IPS1', 'FFC', 'V3B', 'LO1', 'LO2', 'PIT', 'MT', 'A1', 'PSL', 'SFL', 'PCV', 'STV', '7Pm', '7m', 'POS1', '23d', 'v23ab', 'd23ab', '31pv', '5m', '5mv', '23c', '5L', '24dd', '24dv', '7AL', 'SCEF', '6ma', '7Am', '7PL', '7PC', 'LIPv', 'VIP', 'MIP', '1', '2', '3a', '6d', '6mp', '6v', 'p24pr', '33pr', 'a24pr', 'p32pr', 'a24', 'd32', '8BM', 'p32', '10r', '47m', '8Av', '8Ad', '9m', '8BL', '9p', '10d', '8C', '44', '45', '47l', 'a47r', '6r', 'IFJa', 'IFJp', 'IFSp', 'IFSa', 'p9-46v', '46', 'a9-46v', '9-46d', '9a', '10v', 'a10p', '10pp', '11l', '13l', 'OFC', '47s', 'LIPd', '6a', 'i6-8', 's6-8', '43', 'OP4', 'OP1', 'OP2-3', '52', 'RI', 'PFcm', 'PoI2', 'TA2', 'FOP4', 'MI', 'Pir', 'AVI', 'AAIC', 'FOP1', 'FOP3', 'FOP2', 'PFt', 'AIP', 'EC', 'PreS', 'H', 'ProS', 'PeEc', 'STGa', 'PBelt', 'A5', 'PHA1', 'PHA3', 'STSda', 'STSdp', 'STSvp', 'TGd', 'TE1a', 'TE1p', 'TE2a', 'TF', 'TE2p', 'PHT', 'PH', 'TPOJ1', 'TPOJ2', 'TPOJ3', 'DVT', 'PGp', 'IP2', 'IP1', 'IP0', 'PFop', 'PF', 'PFm', 'PGi', 'PGs', 'V6A', 'VMV1', 'VMV3', 'PHA2', 'V4t', 'FST', 'V3CD', 'LO3', 'VMV2', '31pd', '31a', 'VVC', '25', 's32', 'pOFC', 'PoI1', 'Ig', 'FOP5', 'p10p', 'p47r', 'TGv', 'MBelt', 'LBelt', 'A4', 'STSva', 'TE1m', 'PI', 'a32pr', 'p24']
+        clustered_target_name = clustered_source_name.copy()
+
+    if animal_and_dataset_key == 'marmoset_V4':
+        clustered_source_name = ['86', '96', '49', '90', '21', '30', '42', '18', '84', '65', '77', '62', '5', '2', '80', '6', '48', '7', '43', '15', '16', '20', '9', '70', '25', '82', '14', '8', '17', '28', '57', '59', '83', '37', '61', '45', '64', '39', '12', '92', '79', '10', '29', '58', '1', '40', '69', '75', '34', '94', '66', '91', '72', '23', '71', '88', '27', '44', '60', '31', '4', '47', '11', '38', '76', '33', '93', '19', '46', '56', '63', '89', '32', '36', '53', '3', '52', '35', '74', '67', '87', '73', '95', '24', '22', '68', '41', '51', '50', '54', '78', '81', '13', '26', '55', '85']
+        clustered_target_name = ['48', '25', '58', '14', '20', '21', '9', '15', '67', '74', '62', '35', '73', '49', '81', '95', '19', '46', '33', '41', '50', '64', '79', '28', '39', '92', '12', '29', '10', '45', '31', '88', '66', '72', '27', '91', '4', '34', '94', '18', '40']
+
+    return clustered_source_name, clustered_target_name
 
 
 def get_full_split_name(name_to_split_name_dict):
@@ -748,6 +869,109 @@ def get_name_dict(animal, dataset_key):
     return name_dict
 
 
+def combine_name(input_name, animal, dataset_key):
+    '''
+    将脑区名合并
+    '''
+    combined_name = input_name
+    animal_and_dataset_key = animal + '_' + dataset_key
+    if animal_and_dataset_key in ['macaque_markov29', 'macaque_markov40']:
+        if input_name=='F5' or input_name=='44':
+            combined_name = 'F5-44'
+        if input_name=='8m' or input_name=='8l' or input_name=='8r':
+            combined_name = '8m-8l-8r'
+        if input_name=='STPr' or input_name=='STPi' or input_name=='STPc':
+            combined_name = 'STPr-STPi-STPc'
+        if input_name=='7B' or input_name=='7op':
+            combined_name = '7B-7op'
+        if input_name=='1' or input_name=='2':
+            combined_name = '1-2'
+        if input_name=='TEO' or input_name=='TEOm':
+            combined_name = 'TEO-TEOm'
+        if input_name=='946d' or input_name=='46d':
+            combined_name = '946d-46d'
+        if input_name=='Tepd' or input_name=='TEama' or input_name=='TEamp':
+            combined_name = 'Tepd-TEama-TEamp'
+        if input_name=='F3' or input_name=='F6':
+            combined_name = 'F3-F6'
+        if input_name=='45A' or input_name=='45B':
+            combined_name = '45A-45B'
+
+        if input_name=='946v' or input_name=='46v':
+            combined_name = '946v-46v'
+        if input_name=='PGa' or input_name=='IPa':
+            combined_name = 'PGa-IPa'
+
+        if input_name=='TEad' or input_name=='TEpv':
+            combined_name = 'TEad-TEpv'
+    elif animal_and_dataset_key in ['marmoset_majka']:
+        if input_name=='PEC' or input_name=='PE':
+            combined_name = 'PEC-PE'
+        if input_name=='PG' or input_name=='PFG':
+            combined_name = 'PG-PFG'
+        if input_name=='A4ab' or input_name=='A4c':
+            combined_name = 'A4ab-A4c'
+        if input_name=='A6Va' or input_name=='A6Vb':
+            combined_name = 'A6Va-A6Vb'
+        if input_name=='A8aD' or input_name=='A8aV':
+            combined_name = 'A8aD-A8aV'
+        if input_name=='A19M' or input_name=='V6':
+            combined_name = 'A19M-V6'
+        if input_name=='A3a' or input_name=='A3b':
+            combined_name = 'A3a-A3b'
+        if input_name=='A32' or input_name=='A32V':
+            combined_name = 'A32-A32V'
+
+        if input_name=='AuRPB' or input_name=='STR':
+            combined_name = 'AuRPB-STR'
+        if input_name=='AuA1' or input_name=='AuR' or input_name=='AuRT':
+            combined_name = 'AuA1-AuR-AuRT'
+        if input_name=='AuRM' or input_name=='AuRTM' or input_name=='AuCM':
+            combined_name = 'AuRM-AuRTM-AuCM'
+        if input_name=='AuCL' or input_name=='AuML' or input_name=='AuRTL' or input_name=='AuAL':
+            combined_name = 'AuCL-AuML-AuRTL-AuAL'
+        if input_name=='A47L' or input_name=='A47M' or input_name=='A47O':
+            combined_name = 'A47L-A47M-A47O'
+        if input_name=='A23a' or input_name=='A23b' or input_name=='A23c' or input_name=='A23V':
+            combined_name = 'A23a-A23b-A23c-A23V'
+        if input_name=='S2I' or input_name=='S2E' or input_name=='S2PV' or input_name=='S2PR':
+            combined_name = 'S2I-S2E-S2PV-S2PR'
+
+        if input_name=='TFO' or input_name=='TLO' or input_name=='TH' or input_name=='TF' or input_name=='TL':
+            combined_name = 'TFO-TLO-TH-TF-TL'
+        if input_name=='A36' or input_name=='A35':
+            combined_name = 'A36-A35'
+        if input_name=='ReI' or input_name=='GI' or input_name=='DI' or input_name=='AI' or input_name=='IPro':
+            combined_name = 'ReI-GI-DI-AI-IPro'
+        if input_name=='TPro' or input_name=='PaIL' or input_name=='PaIM':
+            combined_name = 'TPro-PaIL-PaIM'
+        if input_name=='A29a-c' or input_name=='A29d' or input_name=='A30':
+            combined_name = 'A29a-c-A29d-A30'
+        if input_name=='A14R' or input_name=='A14C':
+            combined_name = 'A14R-A14C'
+        if input_name=='A13a' or input_name=='A13b' or input_name=='A13L' or input_name=='A13M':
+            combined_name = 'A13a-A13b-A13L-A13M'
+    return combined_name
+
+
+def transform_combined_name(combined_name, source_animal, source_datasetkey, target_animal, target_dataset_key):
+    '''
+    在不同物种之间转换脑区名
+    '''
+    combined_name_marmoset_majka_list = ['V1', 'V2', 'V4', 'V5', 'PEC-PE', 'Opt', 'PG-PFG', 'PGM', 'A4ab A4C', 'A6DC', 'A6DR', 'A6Va-A6Vb', 'A10', 'A8b', 'A8aD-A8aV', 'TPO', 'PF', 'A1-2', 'TEO', 'A46D', 'TE3', 'LIP', 'A19M V6', 'A3a-A3b', 'A8C', 'A6M', 'A9', 'A32-A32V', 'A45', 'AuRPB-STR', 'ProM', 'A46V', 'A24C', 'OPro', 'A25', 'AuA1-AuR-AuRT', 'AuCPB', 'AuRM-AuRTM-AuCM', 'AuCL-AuML-AuRTL-AuAL', 'A19DI', 'V4T', 'V3A', 'MST', 'MIP', 'A47L A47M A470', 'A23a A23b A23c A23V', 'PGa-IPa', 'A24d', 'AIP', 'S2I-S2E-S2PV-S2PR', 'A11', 'V3', 'FST', 'TE1', 'TE2', 'TPPro', 'TFO-TLO-TH-TF-TL', 'A36-A35', 'Ent', 'Pir', 'SUB', 'V6A', 'VIP', 'TPt', 'ReI-GI-DI-AI-IPro', 'TPro-PaIL-PaIM', 'A31', 'ProSt', 'A29a-c-A29d-A30', 'A24a', 'A24b', 'A14R-A14C', 'A13a-A13b-A13L-A13M', 'Gu', 'OPAl']
+    combined_name_macaque_markov29_list = ['V1', 'V2', 'V4', 'MT', '5', 'DP', '7A', '7m', 'F1', 'F2', 'F7', 'F5-44', '10', '8B', '8m-8l-8r', 'STPr-STPi-STPc', '7B-7op', '1-2', 'TEO-TEOm', '946d-46d', 'Tepd-TEama-TEamp', 'LIP', 'V6', '3', 'F4', 'F3-F6', '9', '32', '45A-45B', 'PBr', 'ProM', '946v-46v', '24c', 'OPRO', '25', 'CORE', 'PBc', 'MB', 'LB', 'PIP', 'V4t', 'V3A', 'MST', 'MIP', '12', '23', 'PGa-IPa', '24d', 'AIP', 'SII', '11', 'V3', 'FST', 'TEav', 'TEad-TEpv', 'TEMPORAL_POLE', 'THTF', 'PIRIFORM', 'ENTORHINAL', 'PIR', 'SUBICULUM', 'V6A', 'VIP', 'TPt', 'INSULA', 'Pi', '31', 'Pro.St.', '2930', '24a', '24b', '14', '13', 'Gu', 'OPAI']
+    combined_name_macaque_markov40_list = combined_name_macaque_markov29_list.copy()
+
+    combined_name_dict = {'macaque_markov29': combined_name_macaque_markov29_list, 'macaque_markov40': combined_name_macaque_markov40_list, 'marmoset_majka': combined_name_marmoset_majka_list}
+    combined_name_macaque_list = combined_name_dict[target_animal+'_'+target_dataset_key]
+
+    source_animal_and_dataset_key = source_animal + '_' + source_datasetkey
+    target_animal_and_dataset_key = target_animal + '_' + target_dataset_key
+    idx = combined_name_dict[source_animal_and_dataset_key].index(combined_name)
+    output_name = combined_name_dict[target_animal_and_dataset_key][idx]
+    return output_name
+
+
 def load_category_dict(animal, dataset_key, category_mode):
     '''
     读取区域的类别信息
@@ -761,6 +985,38 @@ def load_category_dict(animal, dataset_key, category_mode):
     for area in area_category.index:
         category_dict[str(area)] = area_category.loc[area, 'area_type']
     return category_dict
+
+
+def get_molnar_performance(animal, dataset_key):
+    '''
+    获取Molnar paper的表现
+    '''
+    macaque_markov29_dict = {
+        'weak': {'MAE': 1.081, 'RMAE': 0.460},
+        'weak_medium': {'MAE': 1.173, 'RMAE': 0.365},
+        'medium_strong': {'MAE': 1.255, 'RMAE': 0.288},
+        'strong': {'MAE': 1.324, 'RMAE': 0.237},
+        'all': {'MAE': 1.207, 'RMAE': 0.336},
+        'non': {'MAE': 1.498, 'RMAE': 1.101},
+        'both': {'MAE': 1.318, 'RMAE': 0.628}
+    }
+
+    mouse_gamanut_dict = {
+        'weak': {'MAE': 1.032, 'RMAE': 0.446},
+        'weak_medium': {'MAE': 0.647, 'RMAE': 0.196},
+        'medium_strong': {'MAE': 0.565, 'RMAE': 0.127},
+        'strong': {'MAE': 0.569, 'RMAE': 0.102},
+        'all': {'MAE': 0.622, 'RMAE': 0.166},
+        'non': {'MAE': 2.911, 'RMAE': 2.288},
+        'both': {'MAE': 0.683, 'RMAE': 0.222}
+    }
+
+    animal_and_dataset_key = animal + '_' + dataset_key
+
+    if animal_and_dataset_key == 'macaque_markov29':
+        return macaque_markov29_dict
+    if animal_and_dataset_key == 'mouse_gamanut':
+        return mouse_gamanut_dict
 # endregion
 
 
@@ -1222,6 +1478,17 @@ class AxonGrowthModel:
     def get_suitable_SC_model_masked_as_data(self):
         return self.get_masked_SC_as_data(SC_type_to_SC_dict_key(self.animal_info.SC_type))
 
+    def get_area_level_correlation(self, diagonal=False):
+        '''
+        获取区域级别的相关性
+        '''
+        if diagonal:
+            raise NotImplementedError
+        else:
+            SC_model = self.get_suitable_SC_model_masked_as_data()
+            SC_data = self.animal_info.SC_data
+            return area_level_correlation(SC_model, SC_data, self.animal, self.dataset_key, diagonal=diagonal)
+
     def RMAE(self):
         pass
 
@@ -1321,599 +1588,6 @@ class AxonGrowthModel:
                 t = s+direction_growth # terminal position of the axon
                 tt.append(t)
         return tt
-
-    # region useless
-    # def part_visualization(self, FLN_list, FLN_titles, file_name, plot_names, sources, targets, plot_type, draw_axon_arrow):
-        
-    #     print('donot use it')
-    #     print(1/0)
-        
-    #     '''Draw several plots, green means the target location, red means source location. More red, larger FLN. FLN should be a list, for example, FLN_list = [FLN_data, FLN_model], FLN_titles should be the corresponding titles, for example, FLN_title = ['FLN_data', 'FLN_model']. Due to the incompleteness of data, we mask missing areas by black(this is only done when plot_type is source, because for plot_type=target, the data is complete.)'''
-    #     color_dict = {'target': 'g', 'source': 'r'}
-    #     target_source_transform = {'target': 'source', 'source': 'target'}
-    #     arrow_size_dict = {'marmoset':0.25, 'macaque40':0.4, 'macaque29':0.4}
-    #     for plot_name in plot_names:
-    #         plot_name_list = self.name2namelist_dict[plot_name]
-    #         figname = '_'+plot_type+'='+str(plot_name)+'.png'
-    #         if plot_type=='source':
-    #             figure ,axes = plt.subplots(1, len(FLN_list), figsize=(len(FLN_list)*10, 10))
-    #             for iii in range(len(FLN_list)):
-    #                 max_area = ''
-    #                 FLN = FLN_list[iii]
-    #                 axes[iii].plot(0, 0, label='target:green/source:red')
-    #                 axes[iii].legend(fontsize=15)
-    #                 for name in self.all_name_coords:
-    #                     accurate_name = self.accurate_name_dict[name]
-    #                     if plot_type=='source':
-    #                         try:
-    #                             alpha = FLN.loc[plot_name, accurate_name]/np.max(FLN.loc[plot_name, self.target_name])
-    #                         except:
-    #                             alpha = 0
-    #                         if str(alpha)=='nan':
-    #                             alpha = 0
-    #                         elif np.allclose(alpha, 1):
-    #                             max_area = accurate_name
-    #                         if accurate_name not in self.target_name:
-    #                             if accurate_name!=plot_name:
-    #                                 axes[iii].fill(self.area_coords[name].T[0], self.area_coords[name].T[1], c='black', zorder=1)
-    #                         else:
-    #                             axes[iii].fill(self.area_coords[name].T[0], self.area_coords[name].T[1], alpha=alpha, c=color_dict[target_source_transform[plot_type]], zorder=1)
-    #                     boundary = self.area_coords[name]
-    #                     boundary = np.append(boundary, [boundary[0]], axis=0)
-    #                     axes[iii].plot(boundary.T[0], boundary.T[1], c='black', linewidth=1, zorder=1)
-    #                     axes[iii].text(self.name_location[name][0], self.name_location[name][1], name, fontsize=7, font={'style':'normal','weight':'black'})
-    #                 for name in plot_name_list:
-    #                     axes[iii].fill(self.area_coords[name].T[0], self.area_coords[name].T[1], c=color_dict[plot_type], zorder=1)
-    #                 if (self.direction=='song') or (self.direction=='exponential') or (self.direction=='song_without_self') or (self.direction=='exponential_without_self') or (self.direction=='song_exclude_self'):
-    #                     # draw arrows
-    #                     for i in range(len(sources)):
-    #                         axes[iii].arrow(sources[i][0], sources[i][1], (targets[i][0]-sources[i][0])/2, (targets[i][1]-sources[i][1])/2, fc='b', ec='b', head_width=arrow_size_dict[self.animal]/2, head_length=arrow_size_dict[self.animal]/2, zorder=2)
-    #                         # if plot_type=='source':
-    #                         #     for name in plot_name_list:
-    #                         #         if self.whether_in_area([sources[i][0], sources[i][1]], self.area_coords[name]):
-    #                         #             axes[iii].arrow(sources[i][0], sources[i][1], (targets[i][0]-sources[i][0])/4, (targets[i][1]-sources[i][1])/4, fc='b', ec='b', head_width=0.15, head_length=0.15)
-    #                         # else:
-    #                         #     axes[iii].arrow(sources[i][0], sources[i][1], (targets[i][0]-sources[i][0])/2, (targets[i][1]-sources[i][1])/2, fc='b', ec='b', head_width=0.2, head_length=0.2)
-    #                 if plot_type=='source':
-    #                     axes[iii].set_title(FLN_titles[iii]+'\nmax fln in this plot: area '+max_area+'\n'+str(np.max(FLN.loc[plot_name, self.target_name])), fontdict={'weight': 'normal', 'size': 25})
-    #                     if FLN_titles[iii]=='FLN_model' and draw_axon_arrow==True:
-    #                         coords_plot_names = self.name2namelist_dict[plot_name]
-    #                         for coords_plot_name in coords_plot_names:
-    #                             index = np.where(((self.indices_ss.flatten()==coords_plot_name)*(self.indices_tt!=coords_plot_name))==True)
-    #                             ss_partial = np.array(self.ss[index])[0:int(np.min([int(30/len(coords_plot_names)), len(index[0])]))]
-    #                             tt_partial = np.array(self.tt[index])[0:int(np.min([int(30/len(coords_plot_names)), len(index[0])]))]
-    #                             for i in range(len(ss_partial)):
-    #                                 axes[iii].arrow(ss_partial[i][0], ss_partial[i][1], tt_partial[i][0]-ss_partial[i][0], tt_partial[i][1]-ss_partial[i][1], fc='orange', ec='orange', head_width=arrow_size_dict[self.animal], head_length=arrow_size_dict[self.animal], zorder=3)
-    #             plt.savefig(str(file_name)+figname, dpi=300)
-    #             plt.close()
-    #         else:
-    #             figure ,axes = plt.subplots(2, len(FLN_list), figsize=(len(FLN_list)*10, 2 * 10))
-    #             for mask_index in range(2):
-    #                 for iii in range(len(FLN_list)):
-    #                     max_area = ''
-    #                     FLN = FLN_list[iii]
-    #                     axes[mask_index, iii].plot(0, 0, label='target:green/source:red')
-    #                     axes[mask_index, iii].legend(fontsize=15)
-    #                     for name in self.all_name_coords:
-    #                         accurate_name = self.accurate_name_dict[name]
-    #                         if plot_type=='target':
-    #                             alpha = FLN.loc[accurate_name, plot_name]/np.max(FLN.loc[:, plot_name])
-    #                             if str(alpha)=='nan':
-    #                                 alpha = 0
-    #                             elif np.allclose(alpha, 1):
-    #                                 max_area = accurate_name
-    #                             axes[mask_index, iii].fill(self.area_coords[name].T[0], self.area_coords[name].T[1], alpha=alpha, c=color_dict[target_source_transform[plot_type]], zorder=1)
-    #                         boundary = self.area_coords[name]
-    #                         boundary = np.append(boundary, [boundary[0]], axis=0)
-    #                         axes[mask_index, iii].plot(boundary.T[0], boundary.T[1], c='black', linewidth=1, zorder=1)
-    #                         axes[mask_index, iii].text(self.name_location[name][0], self.name_location[name][1], name, fontsize=7, font={'style':'normal','weight':'black'})
-    #                     for name in plot_name_list:
-    #                         axes[mask_index, iii].fill(self.area_coords[name].T[0], self.area_coords[name].T[1], c=color_dict[plot_type], zorder=1)
-    #                     if (self.direction=='song') or (self.direction=='exponential') or (self.direction=='song_without_self') or (self.direction=='exponential_without_self') or (self.direction=='song_exclude_self'):
-    #                         # draw arrows
-    #                         for i in range(len(sources)):
-    #                             axes[mask_index, iii].arrow(sources[i][0], sources[i][1], (targets[i][0]-sources[i][0])/2, (targets[i][1]-sources[i][1])/2, fc='b', ec='b', head_width=arrow_size_dict[self.animal]/2, head_length=arrow_size_dict[self.animal]/2, zorder=2)
-    #                     if plot_type=='target':
-    #                         if mask_index==0:
-    #                             axes[mask_index, iii].set_title(FLN_titles[iii]+'\nmax fln in this plot: area '+max_area+'\n'+str(np.max(FLN.loc[:, plot_name])), fontdict={'weight': 'normal', 'size': 25})
-    #                         if FLN_titles[iii]=='FLN_model' and draw_axon_arrow==True:
-    #                             coords_plot_names = self.name2namelist_dict[plot_name]
-    #                             for coords_plot_name in coords_plot_names:
-    #                                 index = np.where(((self.indices_tt.flatten()==coords_plot_name)*(self.indices_ss!=coords_plot_name))==True)
-    #                                 random.shuffle(index)
-    #                                 ss_partial = np.array(self.ss[index])[0:int(np.min([int(30/len(coords_plot_names)), len(index[0])]))]
-    #                                 tt_partial = np.array(self.tt[index])[0:int(np.min([int(30/len(coords_plot_names)), len(index[0])]))]
-    #                                 for i in range(len(ss_partial)):
-    #                                     axes[mask_index, iii].arrow(ss_partial[i][0], ss_partial[i][1], tt_partial[i][0]-ss_partial[i][0], tt_partial[i][1]-ss_partial[i][1], fc='orange', ec='orange', head_width=arrow_size_dict[self.animal], head_length=arrow_size_dict[self.animal], zorder=3)
-    #                     if mask_index==1:
-    #                         for name in self.all_name_coords:
-    #                             accurate_name = self.accurate_name_dict[name]
-    #                             if (accurate_name not in self.target_name) and (accurate_name!=plot_name):
-    #                                 axes[mask_index, iii].fill(self.area_coords[name].T[0], self.area_coords[name].T[1], c='black', zorder=1)
-    #             plt.savefig(str(file_name)+figname, dpi=300)
-    #             plt.close()
-
-
-    # def simultaneously_visualization(self, FLN_list, FLN_titles, file_name, draw_axon_arrow, multiprocess):
-        
-    #     print('donot use it')
-    #     print(1/0)
-        
-    #     '''Using part_visualization to generate FLN visualization plots, accelerated by multiprocess.'''
-    #     if (self.direction=='song') or (self.direction=='exponential') or (self.direction=='song_without_self') or (self.direction=='exponential_without_self') or (self.direction=='song_exclude_self'):
-    #         # generate the vector field
-    #         x_list = np.linspace(self.x_min, self.x_max, self.mesh_dict[self.animal])
-    #         y_list = np.linspace(self.y_min, self.y_max, self.mesh_dict[self.animal])
-    #         sources = []
-    #         for x in x_list:
-    #             for y in y_list:
-    #                 if self.whether_in_area([x, y], self.pgon_whole['whole_cortex'])==True and self.polygon_index([[x, y]])[0]!='out_of_areas':
-    #                     sources.append([x, y])
-    #         targets = self.force_vector(sources,self.beta,self.force_centers_dict)
-    #         sources = np.array(sources)
-    #         targets = np.array(targets)
-    #     else:
-    #         sources = np.nan
-    #         targets = np.nan
-    #     # for each target and source, draw a plot
-    #     if multiprocess:
-    #         process_list = []
-    #         num = 8
-    #         for part_index in range(num):
-    #             targetname = self.target_name[ceil(len(self.target_name)/num)*part_index:ceil(len(self.target_name)/num)*part_index+ceil(len(self.target_name)/num)]
-    #             p = Process(target=self.part_visualization, args=(FLN_list, FLN_titles, file_name, targetname, sources, targets, 'target', draw_axon_arrow))
-    #             p.start()
-    #             process_list.append(p)
-    #         for part_index in range(num):
-    #             sourcename = self.source_name[ceil(len(self.source_name)/num)*part_index:ceil(len(self.source_name)/num)*part_index+ceil(len(self.source_name)/num)]
-    #             p = Process(target=self.part_visualization, args=(FLN_list, FLN_titles, file_name, sourcename, sources, targets, 'source', draw_axon_arrow))
-    #             p.start()
-    #             process_list.append(p)
-    #         for i in process_list:
-    #             p.join()
-    #     else:
-    #         self.part_visualization(FLN_list, FLN_titles, file_name, self.target_name, sources, targets, 'target', draw_axon_arrow)
-    #         self.part_visualization(FLN_list, FLN_titles, file_name, self.source_name, sources, targets, 'source', draw_axon_arrow)
-
-
-    # def do_visualization(self, FLN_data, data_type, draw_axon_arrow=False, multiprocess=True):
-    #     '''Using simultaneously_visualization to get FLN visualization.'''
-        
-    #     print('donot use it')
-    #     print(1/0)
-
-    #     print('----------------FLN visualization----------------')
-    #     mkdir(self.basedir+'/FLN_weight_visualization_'+data_type+'_draw_arrow='+str(draw_axon_arrow))
-    #     self.simultaneously_visualization([FLN_data, self.FLN_model], ['FLN_data_'+str(len(self.target_name)), 'FLN_model'], file_name=self.basedir+'/FLN_weight_visualization_'+data_type+'_draw_arrow='+str(draw_axon_arrow)+'/FLN', draw_axon_arrow=draw_axon_arrow, multiprocess=multiprocess)
-
-    #     FLN_data_topo = pd.DataFrame(np.zeros(np.shape(FLN_data.values)), index=FLN_data.index, columns=FLN_data.columns)
-    #     FLN_data_topo.values[np.nonzero(FLN_data.values)] = 1
-    #     FLN_model_topo = pd.DataFrame(np.zeros(np.shape(self.FLN_model.values)), index=self.FLN_model.index, columns=self.FLN_model.columns)
-    #     FLN_model_topo.values[np.nonzero(self.FLN_model.values)] = 1
-    #     mkdir(self.basedir+'/FLN_topo_visualization_'+data_type+'_draw_arrow='+str(draw_axon_arrow))
-    #     self.simultaneously_visualization([FLN_data_topo, FLN_model_topo], ['FLN_data_'+str(len(self.target_name)), 'FLN_model'], file_name=self.basedir+'/FLN_topo_visualization_'+data_type+'_draw_arrow='+str(draw_axon_arrow)+'/FLN', draw_axon_arrow=draw_axon_arrow, multiprocess=multiprocess)
-
-
-    # def draw_correlation(self, target_list, data_FLN_square, model_FLN_square, data_FLN_rectangle, model_FLN_rectangle, filename):
-    #     print('dont use')
-    #     print(1/0)
-    #     '''Draw correlation plot for each target in target_list. Note that nan is possible because if the data contains all 0, the variance is zero.'''
-    #     correlation_list_square = []
-    #     correlation_list_rectangle = []
-    #     for target in target_list:
-    #         correlation_list_square.append(np.corrcoef(data_FLN_square.loc[:, target], model_FLN_square.loc[:, target])[0, 1])
-    #         correlation_list_rectangle.append(np.corrcoef(data_FLN_rectangle.loc[:, target], model_FLN_rectangle.loc[:, target])[0, 1])
-    #     flatten_corr_square = np.corrcoef(data_FLN_square.loc[:, target_list].values.flatten(), model_FLN_square.loc[:, target_list].values.flatten())[0, 1]
-    #     flatten_corr_rectangle = np.corrcoef(data_FLN_rectangle.loc[:, target_list].values.flatten(), model_FLN_rectangle.loc[:, target_list].values.flatten())[0, 1]
-    #     plt.figure(figsize=(12,7))
-    #     plt.plot(range(len(target_list)), correlation_list_square, 'o-', label='square: mean_corr='+str(round(np.mean(correlation_list_square), 3))+'  flatten_corr='+str(round(flatten_corr_square, 3)))
-    #     plt.plot(range(len(target_list)), correlation_list_rectangle, 'o-', label='rectangle: mean_corr='+str(round(np.mean(correlation_list_rectangle), 3))+'  flatten_corr='+str(round(flatten_corr_rectangle, 3)))
-    #     plt.xticks(range(len(target_list)), target_list, rotation=50, fontsize=8)
-    #     plt.xlabel('target areas')
-    #     plt.ylabel('correlation')
-    #     plt.ylim([-0.2, 1.1])
-    #     plt.legend(loc='upper right')
-    #     plt.savefig(filename+'.png', dpi=300)
-    #     plt.close()
-
-        
-    #     # plt.figure(figsize=(12,7))
-    #     # plt.plot(range(len(target_list)), correlation_list_square, 'o-', label='square: mean_corr='+str(round(np.mean(correlation_list_square), 3))+'  flatten_corr='+str(round(flatten_corr_square, 3)))
-    #     # plt.xticks(range(len(target_list)), target_list, rotation=50, fontsize=8)
-    #     # plt.xlabel('target areas')
-    #     # plt.ylabel('correlation')
-    #     # plt.ylim([-0.2, 1.1])
-    #     # plt.legend()
-    #     # plt.savefig(filename+'_square.png', dpi=300)
-    #     # plt.close()
-
-
-    #     # sort_id = np.argsort(correlation_list_square)
-    #     # plt.figure(figsize=(12,7))
-    #     # plt.plot(range(len(target_list)), np.array(correlation_list_square)[sort_id], 'o-', label='square: mean_corr='+str(round(np.mean(correlation_list_square), 3))+'  flatten_corr='+str(round(flatten_corr_square, 3)))
-    #     # plt.xticks(range(len(target_list)), np.array(target_list)[sort_id], rotation=50, fontsize=8)
-    #     # plt.xlabel('target areas')
-    #     # plt.ylabel('correlation')
-    #     # plt.ylim([-0.2, 1.1])
-    #     # plt.legend()
-    #     # plt.savefig(filename+'_square_sorted.png', dpi=300)
-    #     # plt.close()
-
-
-    #     fig, ax = plt.subplots(figsize=(12,7))
-    #     ax.bar(range(len(target_list)), correlation_list_rectangle, label='rectangle: mean_corr='+str(round(np.mean(correlation_list_rectangle), 3))+'  flatten_corr='+str(round(flatten_corr_rectangle, 3)))
-    #     ax.set_xticks(range(len(target_list)), target_list, rotation=90, fontsize=14)
-    #     ax.set_xlabel('target areas', fontsize=20)
-    #     ax.set_ylabel('correlation', fontsize=20)
-    #     ax.tick_params(axis='y', labelsize=16)
-    #     ax.set_ylim([-0.2, 1.1])
-    #     ax.legend(fontsize=16, loc='upper right')
-    #     plt.tight_layout()
-    #     plt.savefig(filename+'_rectangle.png', dpi=300)
-    #     plt.close()
-
-
-    #     sort_id = np.argsort(correlation_list_rectangle)
-    #     fig, ax = plt.subplots(figsize=(12,7))
-    #     ax.bar(range(len(target_list)), np.array(correlation_list_rectangle)[sort_id], label='rectangle: mean_corr='+str(round(np.mean(correlation_list_rectangle), 3))+'  flatten_corr='+str(round(flatten_corr_rectangle, 3)))
-    #     ax.set_xticks(range(len(target_list)), np.array(target_list)[sort_id], rotation=90, fontsize=14)
-    #     ax.set_xlabel('target areas', fontsize=20)
-    #     ax.set_ylabel('correlation', fontsize=20)
-    #     ax.tick_params(axis='y', labelsize=16)
-    #     ax.set_ylim([-0.2, 1.1])
-    #     ax.legend(fontsize=16, loc='upper right')
-    #     plt.tight_layout()
-    #     plt.savefig(filename+'_rectangle_sorted.png', dpi=300)
-    #     plt.close()
-    #     return correlation_list_square, correlation_list_rectangle, flatten_corr_square, flatten_corr_rectangle
-
-
-    # def do_draw_correlation(self, plot_target_name, FLN_data, FLN_model, plot_name):
-    #     print('dont use')
-    #     print(1/0)
-    #     '''Using draw_correlation to draw correlation plots and get the corr matrix and list.'''
-    #     results = {}
-    #     FLN_data_RECTANGLE = FLN_data[plot_target_name]
-    #     FLN_data_SQUARE = FLN_data.loc[plot_target_name, plot_target_name]
-    #     FLN_model_RECTANGLE = FLN_model[plot_target_name]
-    #     FLN_model_SQUARE = FLN_model.loc[plot_target_name, plot_target_name]
-    #     results['SQUARE_weight'], results['RECTANGLE_weight'], results['flatten_SQUARE_weight'], results['flatten_RECTANGLE_weight']  = self.draw_correlation(plot_target_name, FLN_data_SQUARE, FLN_model_SQUARE, FLN_data_RECTANGLE, FLN_model_RECTANGLE, self.basedir+'/correlation_weight_'+str(plot_name))
-
-    #     FLN_data_topo = pd.DataFrame(np.zeros(np.shape(FLN_data.values)), index=FLN_data.index, columns=FLN_data.columns)
-    #     FLN_data_topo.values[np.nonzero(FLN_data.values)] = 1
-    #     FLN_data_topo_RECTANGLE = FLN_data_topo[plot_target_name]
-    #     FLN_data_topo_SQUARE = FLN_data_topo.loc[plot_target_name, plot_target_name]
-    #     FLN_model_topo = pd.DataFrame(np.zeros(np.shape(FLN_model.values)), index=FLN_model.index, columns=FLN_model.columns)
-    #     FLN_model_topo.values[np.nonzero(FLN_model.values)] = 1
-    #     FLN_model_topo_RECTANGLE = FLN_model_topo[plot_target_name]
-    #     FLN_model_topo_SQUARE = FLN_model_topo.loc[plot_target_name, plot_target_name]
-    #     results['SQUARE_topo'], results['RECTANGLE_topo'], results['flatten_SQUARE_topo'], results['flatten_RECTANGLE_topo']  = self.draw_correlation(plot_target_name, FLN_data_topo_SQUARE, FLN_model_topo_SQUARE, FLN_data_topo_RECTANGLE, FLN_model_topo_RECTANGLE, self.basedir+'/correlation_topo_'+str(plot_name))
-    #     with open(self.basedir+'/results.txt', 'w') as f:
-    #         f.write(plot_name+'\r\n')
-    #         for key in results.keys():
-    #             f.write(key+str(np.mean(results[key]))+'\r\n')
-    #     return results
-
-
-    # def target_location_visualization(self):
-    #     '''Plot the target location (where the injections belong to).'''
-    #     mkdir('../../data/'+str(self.animal)+'/target_location_visualization/')
-    #     file_name = r'../../data/'+str(self.animal)+'/target_location_visualization/target_location_visualization_'+str(len(self.target_name))+'.jpg'
-    #     targets = self.coords_target_name
-    #     fig, ax = plt.subplots(figsize=(20, 20))
-    #     ax.spines['right'].set_visible(False)
-    #     ax.spines['top'].set_visible(False)
-    #     ax.spines['left'].set_visible(False)
-    #     ax.spines['bottom'].set_visible(False)
-    #     ax.axis('off')
-    #     for name in self.all_name_coords:
-    #         boundary = self.area_coords[name]
-    #         boundary = np.append(boundary, [boundary[0]], axis=0)
-    #         plt.plot(boundary.T[0], boundary.T[1], c='black')
-    #         plt.text(self.name_location[name][0], self.name_location[name][1], name, fontsize=20)
-    #     for target in targets:
-    #         plt.fill(self.area_coords[target].T[0], self.area_coords[target].T[1], c='g')
-    #     plt.savefig(str(file_name), bbox_inches='tight', pad_inches=0.0, dpi=300)
-    #     plt.close()
-
-    
-    # def do_visualize_connection(self):
-    #     if self.rearranged==False:
-    #         visualize_connection(self.ss, self.indices_ss, self.indices_tt, self.rearranged, self.basedir, self.area_coords, self.all_name_coords, self.accurate_name_dict, self.name_location)
-    #         visualize_connection_with_injection(self.ss, self.tt, self.indices_ss, self.indices_tt, self.rearranged, self.basedir, self.area_coords, self.all_name_coords, self.accurate_name_dict, self.name_location, self.animal)
-    #     else:
-    #         visualize_connection(self.new_ss, self.new_indices_ss, self.new_indices_tt, self.rearranged, self.basedir, self.area_coords, self.all_name_coords, self.accurate_name_dict, self.name_location)
-
-
-    # def degree_hier_plot(self):
-    #     if self.hierarchy_exist:
-    #         mkdir(self.basedir+'/degree_hier_relation/')
-    #         fig, ax = plt.subplots(figsize=(8, 8))
-    #         for area in self.hierarchy.keys():
-    #             ax.scatter(self.hierarchy[area], np.count_nonzero(self.FLN_model.loc[:, area]), color=default_blue)
-    #         ax.set_xlabel('hierarchy')
-    #         ax.set_ylabel('area_level_degree')
-    #         plt.savefig(self.basedir+'/degree_hier_relation/degree_hier_plot.png', dpi=300)
-    #         plt.close()
-
-
-    # def self_connection_plot(self):
-    #     if self.animal=='marmoset':
-    #         clustered_source_name, clustered_target_name = clustered_name(self.animal)
-    #         intrinsic_proportion(self.animal, self.basedir, clustered_target_name, self.connection_count_matrix_with_self_connection)
-    #     if self.animal=='marmoset-V4':
-    #         clustered_source_name, clustered_target_name = clustered_name(self.animal)
-    #         FLNt_data = pd.read_excel(r'../../data/'+str(self.animal)+'/FLNt_data.xlsx', index_col=0)
-    #         FLNt_data.index = FLNt_data.index.astype(str)
-    #         FLNt_data.columns = FLNt_data.columns.astype(str)
-
-    #         intrinsic_proportion_data = []
-    #         for target in clustered_target_name:
-    #             intrinsic_proportion_data.append(FLNt_data.loc[target, target])
-
-    #         FLNt_model = self.connection_count_matrix_with_self_connection.copy()
-    #         FLNt_model = FLNt_model / FLNt_model.sum(axis=0)
-    #         intrinsic_proportion_model = []
-    #         for target in clustered_target_name:
-    #             intrinsic_proportion_model.append(FLNt_model.loc[target, target])
-    #         uf.mkdir(self.basedir+'/self_connection_proportion/')
-    #         uf.intrisic_bar_scatter_plot(clustered_target_name, self.basedir, intrinsic_proportion_data, intrinsic_proportion_model, corrected_str='')
-
-    
-    # def do_rearrange(self):
-    #     print('donot use it')
-    #     print(1/0)
-    #     self.new_ss, self.new_tt, self.new_indices_ss, self.new_indices_tt = rearrange(self.ss, self.tt, self.indices_ss, self.indices_tt, self.animal)
-    #     self.rearranged = True
-    #     np.save(self.basedir+'/full_data/new_ss_'+str(self.na)+'.npy', self.new_ss)
-    #     np.save(self.basedir+'/full_data/new_tt_'+str(self.na)+'.npy', self.new_tt)
-    #     np.save(self.basedir+'/full_data/new_indices_ss_'+str(self.na)+'.npy', self.new_indices_ss)
-    #     np.save(self.basedir+'/full_data/new_indices_tt_'+str(self.na)+'.npy', self.new_indices_tt)
-
-    
-    # def draw_area_size_degree_plot(self):
-    #     area_size_degree_plot(self.FLN_data, self.FLN_model, self.animal, self.basedir+'/area_size_and_degree/')
-
-    
-    # def do_FLN_visualization(self):
-    #     if self.animal in ['mouse', 'marmoset', 'macaque', 'marmoset-V4']:
-    #         visualize_fln(self.FLN_model, self.FLN_data, self.target_name, self.source_name, self.area_coords, self.name_location, self.name2namelist_dict, self.basedir, data_type='FLN', model_type='FLN', vmax=0.25)
-    #     if self.animal=='marmoset':
-    #         visualize_fln(self.symmetry_CCM/np.sum(self.symmetry_CCM.values)*len(self.source_name), self.DTI_data/np.sum(self.DTI_data.values)*len(self.source_name), self.target_name, self.source_name, self.area_coords, self.name_location, self.name2namelist_dict, self.basedir, data_type='dMRI', model_type='dMRI', vmax=0.25)
-    #     if self.animal=='human':
-    #         visualize_fln(self.symmetry_CCM/np.sum(self.symmetry_CCM.values)*len(self.source_name), self.DTI_data/np.sum(self.DTI_data.values)*len(self.source_name), self.target_name, self.source_name, self.area_coords, self.name_location, self.name2namelist_dict, self.basedir, data_type='dMRI', model_type='dMRI', vmax=0.25)
-    #         # visualize_fln(self.symmetry_CCM/np.sum(self.symmetry_CCM.values)*20, self.DTI_data/np.sum(self.DTI_data.values)*20, self.target_name, self.source_name, self.area_coords, self.name_location, self.name2namelist_dict, self.basedir, data_type='dMRI', model_type='dMRI', vmax=0.25)
-
-
-    # def do_remove_long_range_area_by_area_and_draw_corr(self):
-    #     print('need change, dont use')
-    #     print(1/0)
-    #     distance_matrix_2D = pd.read_excel('../../data/'+str(self.animal)+'/distance_matrix_2D.xlsx', index_col=0)
-    #     remove_long_range_area_by_area_and_draw_corr(self.FLN_model, self.FLN_data, distance_matrix_2D, self.target_name, np.linspace(0, np.max(distance_matrix_2D.values), 30, endpoint=True)[1:], self.basedir)
-
-
-    # def do_remove_long_range_and_cal_corr(self):
-    #     if self.animal!='human':
-    #         remove_long_range_and_cal_corr(self.animal, self.FLN_data, self.FLN_model, self.target_name, self.distance_matrix_2D, self.basedir)
-    #     else:
-    #         remove_long_range_and_cal_corr(self.animal, self.DTI_data/np.sum(self.DTI_data.values)*len(self.source_name), self.symmetry_CCM/np.sum(self.symmetry_CCM.values)*len(self.source_name), self.target_name, self.distance_matrix_2D, self.basedir)
-    #         # remove_long_range_and_cal_corr(self.animal, self.DTI_data/np.sum(self.DTI_data.values)*20, self.symmetry_CCM/np.sum(self.symmetry_CCM.values)*20, self.target_name, self.distance_matrix_2D, self.basedir)
-
-
-    # def do_draw_angle_distance_kde_plot(self):
-    #     if self.animal!='human':
-    #         do_draw_kde_plot(self.animal, self.FLN_data, self.FLN_model, self.basedir)
-    #     else:
-    #         do_draw_kde_plot(self.animal, self.DTI_data/np.sum(self.DTI_data.values)*len(self.source_name), self.symmetry_CCM/np.sum(self.symmetry_CCM.values)*len(self.source_name), self.basedir)
-    #         # do_draw_kde_plot(self.animal, self.DTI_data/np.sum(self.DTI_data.values)*20, self.symmetry_CCM/np.sum(self.symmetry_CCM.values)*20, self.basedir)
-
-
-    # def do_compare_area_by_area(self):
-    #     optimal_para = pd.read_excel('../../results/optimal/optimal_para.xlsx', index_col=0)
-    #     if self.animal=='marmoset' or self.animal=='marmoset-V4':
-    #         threshold = 5 * optimal_para.loc['marmoset', 'Lambda']
-    #     else:
-    #         threshold = 5 * optimal_para.loc[self.animal, 'Lambda']
-    #     if self.animal!='human':
-    #         compare_area_by_area(self.FLN_data, self.FLN_model, self.target_name, 'extrinsic', self.basedir, self.animal, 'remove_diagonal', 'FLNe')
-    #         if self.animal!='mouse' and self.animal!='marmoset-V4':
-    #             FLN_data_without_prefrontal_long_range = remove_prefrontal_long_range(self.FLN_data, threshold, self.animal, distance_type='2D')
-    #             compare_area_by_area(FLN_data_without_prefrontal_long_range, self.FLN_model, self.target_name, 'extrinsic_without_prefrontal_long_range', self.basedir, self.animal, 'remove_diagonal', 'FLNe')
-    #         if self.animal=='marmoset':
-    #             FLN_with_intrinsic_data = get_FLN_with_intrinsic(self.animal)
-    #             FLN_with_intrinsic_model = self.connection_count_matrix_with_self_connection.copy()
-    #             FLN_with_intrinsic_model = FLN_with_intrinsic_model.div(FLN_with_intrinsic_model.sum(axis=0), axis=1)
-    #             compare_area_by_area(FLN_with_intrinsic_data, FLN_with_intrinsic_model, self.target_name, 'with_intrinsic', self.basedir, self.animal, 'dont_remove_diagonal', 'FLNt')
-
-    #             FLN_data_without_prefrontal_long_range = remove_prefrontal_long_range(FLN_with_intrinsic_data, threshold, self.animal, distance_type='2D')
-    #             compare_area_by_area(FLN_data_without_prefrontal_long_range, FLN_with_intrinsic_model, self.target_name, 'with_intrinsic_without_prefrontal_long_range', self.basedir, self.animal, 'remove_diagonal', 'FLNt')
-
-
-    #             FLN_with_corrected_intrinsic_data = get_FLN_with_corrected_intrinsic(self.animal, 'connection_density')
-    #             compare_area_by_area(FLN_with_corrected_intrinsic_data, FLN_with_intrinsic_model, self.target_name, 'with_corrected_by_connection_density_intrinsic', self.basedir, self.animal, 'dont_remove_diagonal', 'FLNt')
-
-    #             FLN_with_corrected_intrinsic_data = get_FLN_with_corrected_intrinsic(self.animal, 'neuron_density')
-    #             compare_area_by_area(FLN_with_corrected_intrinsic_data, FLN_with_intrinsic_model, self.target_name, 'with_corrected_by_neuron_density_intrinsic', self.basedir, self.animal, 'dont_remove_diagonal', 'FLNt')
-
-
-    #             compare_area_by_area(self.DTI_data/np.sum(self.DTI_data.values)*len(self.source_name), self.symmetry_CCM/np.sum(self.symmetry_CCM.values)*len(self.source_name), self.source_name, 'DTI_extrinsic', self.basedir, self.animal, 'remove_diagonal', 'DTIn')
-    #             # compare_area_by_area(self.DTI_data/np.sum(self.DTI_data.values)*20, self.symmetry_CCM/np.sum(self.symmetry_CCM.values)*20, self.source_name, 'DTI_extrinsic', self.basedir, self.animal, 'remove_diagonal', 'DTIn')
-                
-    #             DTI_data_without_prefrontal_long_range = remove_prefrontal_long_range(self.DTI_data, threshold, self.animal, distance_type='2D')
-    #             compare_area_by_area(DTI_data_without_prefrontal_long_range/np.sum(self.DTI_data.values)*len(self.source_name), self.symmetry_CCM/np.sum(self.symmetry_CCM.values)*len(self.source_name), self.source_name, 'DTI_extrinsic_without_prefrontal_long_range', self.basedir, self.animal, 'remove_diagonal', 'DTIn')
-    #             DTI_data_without_prefrontal_long_range = remove_prefrontal_long_range(self.DTI_data, threshold, self.animal, distance_type='2D')
-    #             # compare_area_by_area(DTI_data_without_prefrontal_long_range/np.sum(self.DTI_data.values)*20, self.symmetry_CCM/np.sum(self.symmetry_CCM.values)*20, self.source_name, 'extrinsic_without_prefrontal_long_range', self.basedir, self.animal, 'remove_diagonal', 'DTIn')
-    #     else:
-    #         compare_area_by_area(self.DTI_data/np.sum(self.DTI_data.values)*len(self.source_name), self.symmetry_CCM/np.sum(self.symmetry_CCM.values)*len(self.source_name), self.target_name, 'extrinsic', self.basedir, self.animal, 'remove_diagonal', 'dMRI')
-    #         # compare_area_by_area(self.DTI_data/np.sum(self.DTI_data.values)*20, self.symmetry_CCM/np.sum(self.symmetry_CCM.values)*20, self.target_name, 'extrinsic', self.basedir, self.animal, 'remove_diagonal', 'dMRI')
-            
-    #         DTI_data_without_prefrontal_long_range = remove_prefrontal_long_range(self.DTI_data, threshold, self.animal, distance_type='2D')
-    #         compare_area_by_area(DTI_data_without_prefrontal_long_range/np.sum(self.DTI_data.values)*len(self.source_name), self.symmetry_CCM/np.sum(self.symmetry_CCM.values)*len(self.source_name), self.target_name, 'extrinsic_without_prefrontal_long_range', self.basedir, self.animal, 'remove_diagonal', 'dMRI')
-    #         DTI_data_without_prefrontal_long_range = remove_prefrontal_long_range(self.DTI_data, threshold, self.animal, distance_type='2D')
-    #         # compare_area_by_area(DTI_data_without_prefrontal_long_range/np.sum(self.DTI_data.values)*20, self.symmetry_CCM/np.sum(self.symmetry_CCM.values)*20, self.target_name, 'extrinsic_without_prefrontal_long_range', self.basedir, self.animal, 'remove_diagonal', 'dMRI')
-
-
-    # def do_corr_skewness_plot(self):
-    #     if self.animal=='marmoset':
-    #         FLN_with_intrinsic_data = get_FLN_with_intrinsic(self.animal)
-    #         FLN_with_intrinsic_model = self.connection_count_matrix_with_self_connection.copy()
-    #         FLN_with_intrinsic_model = FLN_with_intrinsic_model.div(FLN_with_intrinsic_model.sum(axis=0), axis=1)
-    #         corr = self.do_area_by_area_correlation()
-    #         corr_with_intrinsic = area_by_area_correlation(FLN_with_intrinsic_data, FLN_with_intrinsic_model, self.target_name)
-    #         corr_list = []
-    #         corr_with_intrinsic_list = []
-    #         for target in self.target_name:
-    #             corr_list.append(corr[target])
-    #             corr_with_intrinsic_list.append(corr_with_intrinsic[target])
-    #         corr_skewness_plot(corr_list, corr_with_intrinsic_list, self.animal, self.basedir)
-
-
-    # def do_corr_direction_preference(self):
-    #     if self.animal=='marmoset':
-    #         FLN_with_intrinsic_data = get_FLN_with_intrinsic(self.animal)
-    #         FLN_with_intrinsic_model = self.connection_count_matrix_with_self_connection.copy()
-    #         FLN_with_intrinsic_model = FLN_with_intrinsic_model.div(FLN_with_intrinsic_model.sum(axis=0), axis=1)
-    #         corr = self.do_area_by_area_correlation()
-    #         corr_with_intrinsic = area_by_area_correlation(FLN_with_intrinsic_data, FLN_with_intrinsic_model, self.target_name)
-    #         corr_list = []
-    #         corr_with_intrinsic_list = []
-    #         for target in self.target_name:
-    #             corr_list.append(corr[target])
-    #             corr_with_intrinsic_list.append(corr_with_intrinsic[target])
-    #         corr_direction_preference_plot(self.animal, corr_list, corr_with_intrinsic_list, self.target_name, self.basedir)
-    #     elif self.animal=='human':
-    #         corr = self.do_area_by_area_correlation()
-    #         corr_list = []
-    #         for target in self.target_name:
-    #             corr_list.append(corr[target])
-    #         corr_direction_preference_plot(self.animal, corr_list, np.nan, self.target_name, self.basedir)
-    #     else:
-    #         corr = self.do_area_by_area_correlation()
-    #         corr_list = []
-    #         for target in self.target_name:
-    #             corr_list.append(corr[target])
-    #         corr_direction_preference_plot(self.animal, corr_list, np.nan, self.target_name, self.basedir)
-
-
-    # def rmae(self):
-    #     if self.animal!='human':
-    #         RMAE_strong, RMAE_medium_strong, RMAE_medium_weak, RMAE_weak, RMAE_all_link, RMAE_non_link, RMAE_both_link = strong_weak_RMAE(self.FLN_data, self.FLN_model, self.basedir, 'FLN', self.target_name, self.source_name, self.animal)
-    #     else:
-    #         RMAE_strong, RMAE_medium_strong, RMAE_medium_weak, RMAE_weak, RMAE_all_link, RMAE_non_link, RMAE_both_link = strong_weak_RMAE(self.DTI_data/np.sum(self.DTI_data.values)*len(self.source_name), self.symmetry_CCM/np.sum(self.symmetry_CCM.values)*len(self.source_name), self.basedir, 'dMRI', self.target_name, self.source_name, self.animal)
-    #         # RMAE_strong, RMAE_medium_strong, RMAE_medium_weak, RMAE_weak, RMAE_all_link, RMAE_non_link, RMAE_both_link = strong_weak_RMAE(self.DTI_data/np.sum(self.DTI_data.values)*20, self.symmetry_CCM/np.sum(self.symmetry_CCM.values)*20, self.basedir, 'dMRI', self.target_name, self.source_name, self.animal)
-    #     if self.animal=='marmoset':
-    #         # 注意这里要用source_name而不是target_name
-    #         RMAE_strong, RMAE_medium_strong, RMAE_medium_weak, RMAE_weak, RMAE_all_link, RMAE_non_link, RMAE_both_link = strong_weak_RMAE(self.DTI_data/np.sum(self.DTI_data.values)*len(self.source_name), self.symmetry_CCM/np.sum(self.symmetry_CCM.values)*len(self.source_name), self.basedir, 'dMRI', self.source_name, self.source_name, self.animal)
-    #     return RMAE_strong, RMAE_medium_strong, RMAE_medium_weak, RMAE_weak, RMAE_all_link, RMAE_non_link, RMAE_both_link
-
-
-    # def do_error_analysis(self):
-    #     if self.animal!='human':
-    #         error_analysis(self.FLN_data, self.FLN_model, self.basedir+'/error_analysis/', 'FLN', self.target_name, self.source_name, self.animal)
-    #     else:
-    #         error_analysis(self.DTI_data/np.sum(self.DTI_data.values)*len(self.source_name), self.symmetry_CCM/np.sum(self.symmetry_CCM.values)*len(self.source_name), self.basedir+'/error_analysis/', 'dMRI', self.target_name, self.source_name, self.animal)
-    #     if self.animal=='marmoset':
-    #         # 注意这里要用source_name而不是target_name
-    #         error_analysis(self.DTI_data/np.sum(self.DTI_data.values)*len(self.source_name), self.symmetry_CCM/np.sum(self.symmetry_CCM.values)*len(self.source_name), self.basedir+'/error_analysis_dMRI/', 'dMRI', self.source_name, self.source_name, self.animal)
-
-
-    # def do_neuron_level_distance_model_data(self):
-    #     neuron_level_distance_model_data(self.animal, self.ss, self.tt, self.basedir)
-
-
-    # def do_get_all_corr(self):
-    #     if self.animal!='human':
-    #         get_all_corr(self.FLN_data, self.FLN_model, self.target_name, self.basedir, 'without_intrinsic', self.animal)
-    #     else:
-    #         get_all_corr(self.DTI_data/np.sum(self.DTI_data.values)*len(self.source_name), self.symmetry_CCM/np.sum(self.symmetry_CCM.values)*len(self.source_name), self.target_name, self.basedir, 'without_intrinsic', self.animal)
-    #         # get_all_corr(self.DTI_data/np.sum(self.DTI_data.values)*20, self.symmetry_CCM/np.sum(self.symmetry_CCM.values)*20, self.target_name, self.basedir, 'without_intrinsic', self.animal)
-    #     if self.animal=='marmoset':
-    #         FLN_with_intrinsic_data = get_FLN_with_intrinsic(self.animal)
-    #         FLN_with_intrinsic_model = self.connection_count_matrix_with_self_connection.copy()
-    #         FLN_with_intrinsic_model = FLN_with_intrinsic_model.div(FLN_with_intrinsic_model.sum(axis=0), axis=1)
-    #         get_all_corr(FLN_with_intrinsic_data, FLN_with_intrinsic_model, self.target_name, self.basedir, 'with_intrinsic', self.animal)
-
-    #         FLN_with_corrected_intrinsic_data = get_FLN_with_corrected_intrinsic(self.animal, 'connection_density')
-    #         get_all_corr(FLN_with_corrected_intrinsic_data, FLN_with_intrinsic_model, self.target_name, self.basedir, 'with_corrected_by_connection_density_intrinsic', self.animal)
-
-    #         FLN_with_corrected_intrinsic_data = get_FLN_with_corrected_intrinsic(self.animal, 'neuron_density')
-    #         get_all_corr(FLN_with_corrected_intrinsic_data, FLN_with_intrinsic_model, self.target_name, self.basedir, 'with_corrected_by_neuron_density_intrinsic', self.animal)
-
-
-    #         get_all_corr(self.DTI_data, self.symmetry_CCM, self.target_name, self.basedir, 'DTI', self.animal)
-    #     if self.animal=='marmoset-V4':
-    #         FLNt = pd.read_excel('../../data/marmoset-V4/FLNt_data.xlsx', index_col=0)
-    #         FLNt.index = FLNt.index.astype(str)
-    #         FLNt.columns = FLNt.columns.astype(str)
-    #         FLN_with_intrinsic_model = self.connection_count_matrix_with_self_connection.copy()
-    #         FLN_with_intrinsic_model = FLN_with_intrinsic_model.div(FLN_with_intrinsic_model.sum(axis=0), axis=1)
-    #         get_all_corr(FLNt, FLN_with_intrinsic_model, self.target_name, self.basedir, 'with_intrinsic', self.animal)
-
-    
-    # def do_occupied_connection(self):
-    #     if self.animal!='human':
-    #         occupied_connection(self.animal, self.FLN_data, self.FLN_model, self.basedir)
-    #     else:
-    #         occupied_connection(self.animal, self.DTI_data/np.sum(self.DTI_data.values)*len(self.source_name), self.symmetry_CCM/np.sum(self.symmetry_CCM.values)*len(self.source_name), self.basedir)
-    #         # occupied_connection(self.animal, self.DTI_data/np.sum(self.DTI_data.values)*20, self.symmetry_CCM/np.sum(self.symmetry_CCM.values)*20, self.basedir)
-
-
-    # def do_visualize_connection_matrix_and_distribution(self):
-    #     if self.animal!='human':
-    #         visualize_connection_matrix_and_distribution(self.animal, self.FLN_data, self.FLN_model, self.target_name, self.source_name, self.basedir, self.distance_matrix_2D, '2D')
-    #         visualize_connection_matrix_and_distribution(self.animal, self.FLN_data, self.FLN_model, self.target_name, self.source_name, self.basedir, self.distance_matrix_3D, '3D')
-    #     else:
-    #         visualize_connection_matrix_and_distribution(self.animal, self.DTI_data/np.sum(self.DTI_data.values)*len(self.source_name), self.symmetry_CCM/np.sum(self.symmetry_CCM.values)*len(self.source_name), self.target_name, self.source_name, self.basedir, self.distance_matrix_2D, '2D')
-    #         visualize_connection_matrix_and_distribution(self.animal, self.DTI_data/np.sum(self.DTI_data.values)*len(self.source_name), self.symmetry_CCM/np.sum(self.symmetry_CCM.values)*len(self.source_name), self.target_name, self.source_name, self.basedir, self.distance_matrix_3D, '3D')
-    #         # visualize_connection_matrix_and_distribution(self.animal, self.DTI_data/np.sum(self.DTI_data.values)*20, self.symmetry_CCM/np.sum(self.symmetry_CCM.values)*20, self.target_name, self.source_name, self.basedir, self.distance_matrix_2D)
-    #     if self.animal=='marmoset':
-    #         # 对于marmoset，单独再画一个DTI的EDR
-    #         edr_model_data(self.source_name, self.target_name, self.DTI_data/np.sum(self.DTI_data.values)*len(self.source_name), self.symmetry_CCM/np.sum(self.symmetry_CCM.values)*len(self.source_name), self.animal, self.basedir+'/connection_matrix_and_distribution/EDR_comparison_DTI_2D', '2D')
-    #         edr_model_data(self.source_name, self.target_name, self.DTI_data/np.sum(self.DTI_data.values)*len(self.source_name), self.symmetry_CCM/np.sum(self.symmetry_CCM.values)*len(self.source_name), self.animal, self.basedir+'/connection_matrix_and_distribution/EDR_comparison_DTI_3D', '3D')
-    #     if self.animal=='marmoset-V4' or self.animal=='marmoset':
-    #         clustered_source_name, clustered_target_name = clustered_name(self.animal)
-    #         # 定义new_source_name(其实就是对于source_name的重新排序),先放置target_name再放置其余的
-    #         new_source_name = clustered_target_name.copy()
-    #         for area in clustered_source_name:
-    #             if area not in new_source_name:
-    #                 new_source_name.append(area)
-
-    #         if self.animal=='marmoset':
-    #             FLNt_data = get_FLN_with_intrinsic(self.animal)
-    #         else:
-    #             FLNt_data = pd.read_excel('../../data/marmoset-V4/FLNt_data.xlsx', index_col=0)
-    #         FLNt_data.index = FLNt_data.index.astype(str)
-    #         FLNt_data.columns = FLNt_data.columns.astype(str)
-
-    #         FLNt_model = self.connection_count_matrix_with_self_connection.copy()
-    #         FLNt_model = FLNt_model.div(FLNt_model.sum(axis=0), axis=1)
-
-    #         vmax_dict = {'mouse': 0.2, 'macaque': 0.2, 'marmoset': 0.2, 'human': 0.2, 'marmoset-V4': 0.2}
-    #         vmax = vmax_dict[self.animal]
-
-    #         uf.connection_matrix_heatmap_vertical(FLNt_data, FLNt_model, vmax, 'jet', clustered_target_name, new_source_name, self.basedir+'/connection_matrix_and_distribution/weighted_connection_matrix_t_full', 'normal', self.animal)
-
-
-    # def do_area_by_area_correlation(self):
-    #     '''remove the diagonal of FLN matrix and calculate the correlation'''
-    #     if self.animal=='marmoset':
-    #         # 注意要对source_name做操作
-    #         _ = area_by_area_correlation_without_diagonal(self.DTI_data/np.sum(self.DTI_data.values)*len(self.source_name), self.symmetry_CCM/np.sum(self.symmetry_CCM.values)*len(self.source_name), self.source_name)
-    #     if self.animal!='human':
-    #         corr = area_by_area_correlation_without_diagonal(self.FLN_data[self.target_name], self.FLN_model[self.target_name], self.target_name)
-    #     else:
-    #         corr = area_by_area_correlation_without_diagonal(self.DTI_data/np.sum(self.DTI_data.values)*len(self.source_name), self.symmetry_CCM/np.sum(self.symmetry_CCM.values)*len(self.source_name), self.target_name)
-    #     return corr
-    
-
-    # def do_connection_proportion_wrt_to_distance_neuron_level(self):
-    #     connection_proportion_wrt_to_distance_neuron_level(self.ss, self.tt, np.max(self.distance_matrix_2D.values), self.basedir)
-
-
-    # def do_FLN_symmetry(self):
-    #     if self.animal in ['mouse', 'marmoset', 'macaque']:
-    #         FLN_symmetry(self.animal, self.FLN_data, self.FLN_model, self.basedir)
-    # endregion
 
 
 class AxonGrowthModelLoader(AxonGrowthModel):
@@ -2104,7 +1778,59 @@ def log_SC(SC, animal, dataset_key, base=10, apply_c=False, apply_w=False):
     return SC_log
 
 
+def coarse_grain_to_combined(value_dict, animal, dataset_key):
+    '''
+    将value_dict中的值合并到combined的脑区中,并求平均值
+    '''
+    animal_info = AnimalInfo(animal, dataset_key)
 
+    if animal_info.animal_and_dataset_key not in ['macaque_markov29', 'macaque_markov40', 'marmoset_majka']:
+        raise NotImplementedError
+
+    combined_value_dict = {}
+    count_dict = {}
+    for area, value in value_dict.items():
+        combined_name = combine_name(area, animal, dataset_key)
+        count_dict[combined_name] = count_dict.get(combined_name, 0) + 1
+        combined_value_dict[combined_name] = combined_value_dict.get(combined_name, 0) + value
+    for combined_name in combined_value_dict.keys():
+        combined_value_dict[combined_name] = combined_value_dict[combined_name] / count_dict[combined_name]
+    return combined_value_dict
+
+
+def get_weight_category_mask(animal, dataset_key):
+    '''
+    根据SC的强度,将边分为多类:
+    '''
+    animal_info = AnimalInfo(animal, dataset_key)
+    w = animal_info.w
+    SC_data = animal_info.SC_data
+    SC_data_logged = log_SC(SC_data, animal, dataset_key, apply_c=True, apply_w=False)
+
+    category_mask_dict = {}
+    category_mask_dict['weak'] = (SC_data_logged > w) & (SC_data_logged < 3)
+    category_mask_dict['weak_medium'] = (SC_data_logged > w) & (SC_data_logged < 5)
+    category_mask_dict['medium_strong'] = SC_data_logged > 3
+    category_mask_dict['strong'] = SC_data_logged > 5
+    category_mask_dict['all'] = SC_data_logged > w
+    category_mask_dict['non'] = SC_data_logged <= w
+    category_mask_dict['both'] = (SC_data_logged > w) | (SC_data_logged <= w) # both all and non
+    return category_mask_dict
+
+
+def get_intrinsic_proportion_from_SCt(SCt, animal, dataset_key):
+    '''
+    从SCt中获取intrinsic的比例
+    '''
+    animal_info = AnimalInfo(animal, dataset_key)
+    intrinsic_proportion = {}
+    if animal_info.animal_and_dataset_key == 'marmoset_majka':
+        col_sum = cf.col_sum_df(SCt)
+        for area in animal_info.full_name:
+            intrinsic_proportion[area] = SCt.loc[area, area] / col_sum[area]
+    else:
+        raise NotImplementedError
+    return intrinsic_proportion
 # endregion
 
 
@@ -2117,6 +1843,35 @@ def data_model_correlation(SC_data, SC_model, animal, dataset_key, diagonal=Fals
     sub_SC_model = cf.get_sub_df(df=SC_model, row_list=source_name, col_list=target_name)
     corr = cf.get_pd_rectangle_corr(sub_SC_data, sub_SC_model, diagonal=diagonal)
     return corr
+
+
+def data_model_relative_error(SC_data, SC_model, animal, dataset_key, diagonal=False):
+    animal_info = AnimalInfo(animal, dataset_key)
+    target_name = animal_info.target_name
+    source_name = animal_info.source_name
+    sub_SC_data = cf.get_sub_df(df=SC_data, row_list=source_name, col_list=target_name)
+    sub_SC_model = cf.get_sub_df(df=SC_model, row_list=source_name, col_list=target_name)
+    sub_SC_data_logged = log_SC(sub_SC_data, animal, dataset_key, apply_c=True, apply_w=True)
+    sub_SC_model_logged = log_SC(sub_SC_model, animal, dataset_key, apply_c=True, apply_w=True)
+    relative_error = cf.get_zero_df(index=source_name, columns=target_name)
+    for source in source_name:
+        for target in target_name:
+            relative_error.loc[source, target] = np.abs(sub_SC_data_logged.loc[source, target] - sub_SC_model_logged.loc[source, target]) / sub_SC_data_logged.loc[source, target]
+            if diagonal == False:
+                if source == target:
+                    relative_error.loc[source, target] = np.nan
+    return relative_error
+
+
+def data_model_RMAE_in_category(SC_data, SC_model, animal, dataset_key, category, diagonal=False):
+    '''
+    RMAE: Relative Mean Absolute Error
+
+    category: 一个df,需要计入的部分为1,不计入的部分为0
+    '''
+    relative_error = data_model_relative_error(SC_data, SC_model, animal, dataset_key, diagonal=diagonal)
+    RMAE = np.sum(relative_error.values * category.values) / np.sum(category.values)
+    return RMAE
 
 
 def area_level_correlation(SC_data, SC_model, animal, dataset_key, diagonal=False):
@@ -2147,10 +1902,138 @@ def get_rm_longrange_correlation_change(SC_data, SC_model, distance_matrix, anim
         if rm_mode == 'data' or rm_mode == 'both':
             SC_data_threshold[distance_matrix > threshold] = 0
         if rm_mode == 'model' or rm_mode == 'both':
-            SC_model_threshold[distance_matrix > threshold]
+            SC_model_threshold[distance_matrix > threshold] = 0
         corr = data_model_correlation(SC_data_threshold, SC_model_threshold, animal, dataset_key, diagonal=False)
         corr_list.append(corr)
     return corr_list
+
+
+def get_direction_preference_FLN(animal, with_intrinsic=False):
+    # using FLN to generate axon for each target, and test whether these axon is uniform w.r.t. angle
+    target_name, source_name, full_name, coords_target_name, all_name_coords, accurate_name_dict, name2namelist_dict = get_names(animal)
+    with open(r'../../data/'+animal+'/name_location.pickle', 'rb') as file:
+        name_location = pickle.load(file)
+    area_coords_whole, all_name_whole, pgon_whole, pts_whole = load_coords_data(Path('../../data/'+str(animal)+'/whole_cortex_coords/'))
+    area_coords, all_name_coords, pgon, pts = load_coords_data(Path('../../data/'+str(animal)+'/area_coords/'))
+    if animal!='human':
+        if with_intrinsic:
+            FLN_data = get_FLN_with_intrinsic(animal)
+        else:
+            FLN_data = pd.read_excel(r'../../data/'+animal+'/FLN_data.xlsx', index_col=0)
+    else:
+        DTI_data = pd.read_excel(r'../../data/'+str(animal)+'/DTI_data.xlsx', index_col=0)
+        FLN_data = DTI_data.div(DTI_data.sum())
+
+    angle_dict = {}
+    ss=[]
+    tt=[]
+    indices_ss=[]
+    indices_tt=[]
+    for target in target_name:
+        angle_dict[target] = []
+        for spilit_target in name2namelist_dict[target]:
+            for source in source_name:
+                for spilit_source in name2namelist_dict[source]:
+                    # for a target and a source, the axon num should be FLN[source, target]*constant, for a spilit_target and a spilit_source, the axon num should be FLN[source, target]*constant*spilit_target_size/target_size*spilit_source_size/source_size
+                    target_size = 0
+                    for sub_target in name2namelist_dict[target]:
+                        target_size += pgon[sub_target].area
+                    source_size = 0
+                    for sub_source in name2namelist_dict[source]:
+                        source_size += pgon[sub_source].area
+                    for i in range(int(FLN_data.loc[source, target]*10**4*pgon[spilit_target].area/target_size*pgon[spilit_source].area/source_size)):
+                        t = pointpats.random.poisson(pgon[spilit_target],size=1)
+                        index_t = spilit_target
+                        s = pointpats.random.poisson(pgon[spilit_source],size=1)
+                        index_s = spilit_source
+                        tt.append(t)
+                        ss.append(s)
+                        indices_tt.append(index_t)
+                        indices_ss.append(index_s)
+                        angle_dict[target].append(get_angle(s[0], s[1], t[0], t[1]))
+
+    ks_distance_list = []
+    for target in target_name:
+        ks_distance_list.append(rotation_to_get_ks(angle_dict[target]))
+    return ks_distance_list
+
+
+def get_skewness(animal, skewness_type):
+    if animal=='marmoset':
+        if skewness_type=='3D':
+            SI_table_3 = pd.read_excel('../../data/marmoset/SI_table_3.xlsx')
+            atlas = nib.load('../../data/marmoset/all_injections/atlas_segmentation_200um.nii.gz')
+            area_name = pd.read_excel('../../data/marmoset/all_injections/atlas_labels.xlsx')
+            target_name, source_name, full_name, coords_target_name, all_name_coords, accurate_name_dict, name2namelist_dict = get_names('marmoset')
+            atlas_label = atlas.get_fdata()
+            affine = atlas.affine
+
+            # test_location_match_paper(SI_table_3, affine, atlas_label, area_name)
+            center = get_centers_3D(atlas_label, area_name, affine)
+            voxel_num = get_voxel_num(atlas_label, area_name)
+            distance = injection_center_distance(SI_table_3, center)
+            radius = get_radius(atlas_label, area_name, affine)
+            skewness = []
+            for target in target_name:
+                skewness.append(distance[target]/radius[target])
+        if skewness_type=='2D':
+            def max_distance_in_polygon(vertices):
+                max_dist = 0
+                vertex_count = len(vertices)
+                max_dist_points = (0, 0)
+
+                for i in range(vertex_count):
+                    for j in range(i + 1, vertex_count):
+                        dist = math.sqrt((vertices[i][0] - vertices[j][0]) ** 2 + (vertices[i][1] - vertices[j][1]) ** 2)
+                        if dist > max_dist:
+                            max_dist = dist
+                            max_dist_points = (vertices[i], vertices[j])
+
+                return max_dist
+            target_name, source_name, full_name, coords_target_name, all_name_coords, accurate_name_dict, name2namelist_dict = get_names('marmoset')
+            area_coords, all_name_coords, pgon, pts = load_coords_data(Path('../../data/'+str(animal)+'/area_coords/'))
+            centers = {}
+            for name in all_name_coords:
+                cx,cy = np.mean(pts[name][:,0]),np.mean(pts[name][:,1])
+                centers[name] = np.array([cx,cy])
+            flatmap_injection_location = pd.read_excel('../../data/'+animal+'/flatmap_injection_location.xlsx', index_col=0)
+            SI_table_3 = pd.read_excel('../../data/marmoset/SI_table_3.xlsx')
+            distance = {}
+            radius = {}
+            for row in range(len(SI_table_3.index)):
+                # 有一些SI_table_3中的case带一个X,R,L,要去掉再匹配
+                injection_id = re.sub('[XRL]', '', SI_table_3.iloc[row]['Case']) + '-' + SI_table_3.iloc[row]['Tracer']
+                if injection_id in flatmap_injection_location.loc[:, 'injection_id'].values:
+                    area = SI_table_3.iloc[row]['Area']
+                    distance[area] = []
+                    radius[area] = 0
+                    for spilit_area in name2namelist_dict[area]:
+                        distance[area].append(np.linalg.norm(centers[spilit_area] - flatmap_injection_location[flatmap_injection_location['injection_id']==injection_id][['flatmap_x', 'flatmap_y']].values.flatten()))
+                        radius[area] += max_distance_in_polygon(area_coords[spilit_area])/2
+                    distance[area] = np.min(distance[area])
+                else:
+                    print(injection_id)
+            skewness = []
+            for target in target_name:
+                if target in distance.keys():
+                    skewness.append(distance[target]/radius[target])
+                else:
+                    skewness.append(np.nan)
+                    print(target)
+        return skewness
+
+
+def transform_combined_name_value_dict(combined_name_value_dict, source_animal, source_datasetkey, target_animal, target_dataset_key):
+    '''
+    combined_name_value_dict: {combined_name: value}
+    
+    将combined_name_value_dict中的key转换为target_animal和target_dataset_key的脑区名,并且将value保持不变
+    '''
+    new_combined_name_value_dict = {}
+    for combined_name, value in combined_name_value_dict.items():
+        new_combined_name = transform_combined_name(combined_name, source_animal, source_datasetkey, target_animal, target_dataset_key)
+        new_combined_name_value_dict[new_combined_name] = value
+    return new_combined_name_value_dict
 
 
 def angle_distance_independence_test():
@@ -2267,8 +2150,7 @@ def visualize_connection_matrix_heatmap(ax_data, ax_model, matrix_data, matrix_m
     topo: 是否将矩阵转化为拓扑矩阵
     '''
     animal_info = AnimalInfo(animal, dataset_key)
-    target_name = animal_info.target_name
-    source_name = animal_info.source_name
+    reordered_full_name_clustered = animal_info.reordered_full_name_clustered
     SC_type = animal_info.SC_type
 
     if log_matrix:
@@ -2295,6 +2177,10 @@ def visualize_connection_matrix_heatmap(ax_data, ax_model, matrix_data, matrix_m
         vmax = 1.
     else:
         cmap = plt.cm.jet
+    
+    local_matrix_data = cf.reorder_df(local_matrix_data, reordered_full_name_clustered, reordered_full_name_clustered)
+    local_matrix_model = cf.reorder_df(local_matrix_model, reordered_full_name_clustered, reordered_full_name_clustered)
+
     ticks = [vmin, vmax]
 
     # 连接矩阵
@@ -2345,8 +2231,21 @@ def visualize_data_model_distribution_scaled_by_SC(ax, some_property, SC_data, S
         pass
 
 
-def visualize_intrinsic_proportion():
-    pass
+def visualize_macaque_marmoset_performance_similarity(ax, macaque_performance_dict, marmoset_performance_dict):
+    combined_macaque_performance_dict = coarse_grain_to_combined(macaque_performance_dict, 'macaque', 'markov40')
+    combined_marmoset_performance_dict = coarse_grain_to_combined(marmoset_performance_dict, 'marmoset', 'majka')
+
+    transformed_combined_macaque_performance_dict = transform_combined_name_value_dict(combined_macaque_performance_dict, source_animal='macaque', source_datasetkey='markov40', target_animal='marmoset', target_dataset_key='majka')
+
+    # 求出两个字典的交集
+    common_area = set(transformed_combined_macaque_performance_dict.keys()) & set(combined_marmoset_performance_dict.keys())
+    insect_transformed_combined_macaque_performance_dict = cf.get_sub_dict(transformed_combined_macaque_performance_dict, common_area)
+    insect_combined_marmoset_performance_dict = cf.get_sub_dict(combined_marmoset_performance_dict, common_area)
+
+    x = list(insect_transformed_combined_macaque_performance_dict.values())
+    y = list(insect_combined_marmoset_performance_dict.values())
+    cf.plt_linregress(ax, x, y, show_list=['p', 'r'])
+    cf.set_ax(ax, xlabel='Performance (macaque)', ylabel='Performance (marmoset)')
 
 
 class SingleCaseVisualizer(cf.SingleVisualizer):
@@ -2400,13 +2299,11 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
     def data_model_SC(self, ax_model, ax_data):
         visualize_connection_matrix_heatmap(ax_data, ax_model, matrix_data=self.SC_data, matrix_model=self.SC_model, animal=self.animal, dataset_key=self.dataset_key, log_matrix=False, topo=False)
 
-    def area_level_performance(self, ax, performance_metric='correlation', sort=True, SC_dict_key=None):
-        if SC_dict_key is None:
+    def area_level_performance(self, ax, performance_metric='correlation', sort=True, SC_data=None, SC_model=None):
+        if SC_data is None:
             SC_data = self.SC_data
+        if SC_model is None:
             SC_model = self.SC_model
-        else:
-            # SC_data还没写
-            SC_model = self.axon_growth_model.SC_model_dict[SC_dict_key]
         if performance_metric == 'correlation':
             performance_dict = area_level_correlation(SC_data=SC_data, SC_model=SC_model, animal=self.animal, dataset_key=self.dataset_key, diagonal=False)
         else:
@@ -2473,6 +2370,18 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
             angle_3D_dict = self.animal_info.angle_3D
             azim_matrix = angle_3D_dict['azim_matrix']
             elev_matrix = angle_3D_dict['elev_matrix']
+
+    def intrinsic_proportion(self, ax):
+        if self.animal_info.animal_and_dataset_key == 'marmoset_majka':
+            target_name = self.animal_info.target_name
+
+            intrinsic_proportion_data = self.animal_info.intrinsic_proportion
+            intrinsic_proportion_model = get_intrinsic_proportion_from_SCt(self.axon_growth_model.SC_model_dict['FLNt'], self.animal, self.dataset_key)
+            intrinsic_proportion_data_flatten = [intrinsic_proportion_data[area] for area in self.animal_info.target_name]
+            intrinsic_proportion_model_flatten = [intrinsic_proportion_model[area] for area in self.animal_info.target_name]
+            x = range(len(target_name))
+            cf.plt_two_side_bar(ax, x, intrinsic_proportion_data_flatten, intrinsic_proportion_model_flatten, color1=DATA_COLOR, color2=MODEL_COLOR, label1='data', label2='model')
+            cf.set_ax(ax, xlabel='Area', ylabel='Intrinsic proportion', xtick=x, xtick_label=target_name, xtick_rotation=90)
 
     def distance_SC_scatter(self, ax, data_or_model, dim='2D'):
         if dim == '2D':
@@ -2628,7 +2537,13 @@ class PaperFig:
             if area in [source_area, target_area]:
                 points = generate_random_point_in_polygon(polygon, density=point_density, seed=0)
                 cf.plt_scatter(ax, points[:, 0], points[:, 1], color=split_color_dict[area], s=s, zorder=-1)
-        cf.add_arrow(ax, x_start=source_center[0], y_start=source_center[1], x_end=target_center[0], y_end=target_center[1])
+        cf.add_arrow(ax, x_start=source_center[0], y_start=source_center[1], x_end=target_center[0], y_end=target_center[1], fc=cf.BLACK, ec=cf.BLACK)
+        r = np.linalg.norm(source_center - target_center)
+        theta = cf.get_angle(source_center, target_center)
+        cf.plt_line(ax, [source_center[0], source_center[0] + r], [source_center[1], source_center[1]], color=cf.BLACK)
+        cf.add_arc_patch(ax, source_center, r * 0.3, 0, theta, facecolor=cf.BLACK, edgecolor=cf.BLACK)
+        # cf.add_text(ax, text='d', x=(source_center[0] + target_center[0])/2, y=(source_center[1] + target_center[1])/2, va='center', ha='center', transform='data', text_process={'capitalize': False})
+        cf.add_text(ax, text='$\\theta$', x=source_center[0] + np.cos(theta/2) * r * 0.4, y=source_center[1] + np.sin(theta/2) * r * 0.4, va='center', ha='center', transform='data')
 
         ax = ax_dict['d']
         cf.plt_line(ax, exp_x, exp_y)
@@ -2704,6 +2619,7 @@ class PaperFig:
         cf.add_axes_dict_tag(axes_dict=ax_dict, ref_ax=ax[0, 0])
 
         ax = ax_dict['a']
+        single_visualizer.intrinsic_proportion(ax)
 
         ax = ax_dict['b']
         single_visualizer.SC_distribution(ax, data_or_model='data', log_scale=True)
@@ -2753,6 +2669,7 @@ class PaperFig:
         single_visualizer.area_level_performance(ax, performance_metric='correlation', sort=True)
 
         ax = ax_dict['b']
+        single_visualizer.area_level_performance(ax, performance_metric='correlation', sort=True, SC_data=animal_info.SCt_data, SC_model=single_visualizer.axon_growth_model.SC_model_dict['FLNt'])
 
         ax = ax_dict['c']
         single_visualizer.connection_on_flatmap(ax, data_or_model='data', which_area='A1-2')
@@ -2784,5 +2701,24 @@ class PaperFig:
         self.multi_visualizer.save_fig(self.figdir+'/fig6')
 
     def fig_7(self):
-        pass
+        '''
+        cross species
+        '''
+        fig, axes = cf.get_fig_ax(ncols=3)
+
+        ax_dict = {}
+        ax_dict['a'] = axes[0]
+        ax_dict['b'] = axes[1]
+        ax_dict['c'] = axes[2]
+
+        ax = ax_dict['a']
+        macaque_performance_dict = self.multi_visualizer.get_single_visualizer('macaque_markov40').axon_growth_model.get_area_level_correlation()
+        marmoset_performance_dict = self.multi_visualizer.get_single_visualizer('marmoset_majka').axon_growth_model.get_area_level_correlation()
+        visualize_macaque_marmoset_performance_similarity(ax, macaque_performance_dict, marmoset_performance_dict)
+
+        ax = ax_dict['b']
+        
+        cf.add_axes_dict_tag(axes_dict=ax_dict, ref_ax=axes[0])
+
+        cf.save_fig(fig, self.figdir+'/fig7', **self.save_fig_kwargs)
 # endregion
