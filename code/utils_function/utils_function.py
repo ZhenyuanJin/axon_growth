@@ -1701,6 +1701,94 @@ class AxonGrowthModelLoader(AxonGrowthModel):
         self.dataset_key = dataset_key
         self.timedir = timedir
         self.animal_info = AnimalInfo(animal, dataset_key)
+
+
+class AxonGrowthModelNew(cf.MetaModel):
+    def __init__(self):
+        super().__init__()
+        self.set_value_dir_both_dir_key(['animal_and_dataset_key'])
+        self.set_default_params()
+
+    def set_default_params(self):
+        '''
+        设置默认参数,有可能会被覆盖
+        '''
+        self.process_num = 1
+        self.model_type = 'send'
+        self.use_neuron_density_to_generate = False
+        self.use_part_index_as_seed = True
+        self.max_iteration = 10
+
+    @property
+    def point_density(self):
+        if self.use_neuron_density_to_generate:
+            return self.animal_info.neuron_density.copy()
+        else:
+            return cf.create_dict(self.animal_info.full_name, default_value=1)
+
+    def set_params(self, params):
+        super().set_params(params)
+        self.animal_info = AnimalInfo(self.animal, self.dataset_key)
+
+    def set_direct_results_key(self):
+        self.direct_results_key = ['ss', 'tt', 'indices_ss', 'indices_tt']
+
+    def run_detail(self):
+        generation_kwargs = {'animal': self.animal, 'dataset_key': self.dataset_key, 'direction_method': self.direction_method, 'length_method': self.length_method, 'direction_params': self.direction_params, 'length_params': self.length_params, 'na': int(self.na/self.process_num), 'point_density': self.point_density, 'model_type': self.model_type, 'use_part_index_as_seed': self.use_part_index_as_seed, 'max_iteration': self.max_iteration}
+        generate_for_list = list(range(self.process_num))
+        axon_list = cf.multi_process_list_for(process_num=self.process_num, func=part_generate_axon_source_target, kwargs=generation_kwargs, for_list=generate_for_list, for_idx_name='part_index')
+        # 合并结果
+        self.direct_results = defaultdict(list)
+        for r in axon_list:
+            for k, v in r.items():
+                self.direct_results[k].extend(v)
+        # 将所有结果变成array
+        self.direct_results = {k: np.array(v) for k, v in self.direct_results.items()}
+
+    @property
+    def SC_model_dict(self):
+        '''
+        获取SC_model_dict
+        '''
+        try:
+            return load_SC_model_dict(self.outcomes_dir)
+        except:
+            indices_ss = self.get_value_from_direct_results('indices_ss')
+            indices_tt = self.get_value_from_direct_results('indices_tt')
+            return generate_SC_from_axon_source_target(self.animal, self.dataset_key, outcomes_dir=self.outcomes_dir, indices_ss=indices_ss, indices_tt=indices_tt)
+
+    def get_suitable_SC_model(self):
+        '''
+        获取和数据匹配的SC_model
+        '''
+        SC_dict_key = SC_type_to_SC_dict_key(self.animal_info.SC_type)
+        return self.SC_model_dict[SC_dict_key]
+
+    def get_masked_SC_as_data(self, SC_dict_key):
+        masked_SC = self.SC_model_dict[SC_dict_key].copy()
+        # 将source_name和target_name以外的所有值变为nan
+        for r in masked_SC.index:
+            for c in masked_SC.columns:
+                if r not in self.animal_info.source_name or c not in self.animal_info.target_name:
+                    masked_SC.loc[r, c] = np.nan
+        return masked_SC
+
+    def get_suitable_SC_model_masked_as_data(self):
+        return self.get_masked_SC_as_data(SC_type_to_SC_dict_key(self.animal_info.SC_type))
+
+    def get_area_level_correlation(self, diagonal=False):
+        '''
+        获取区域级别的相关性
+        '''
+        if diagonal:
+            raise NotImplementedError
+        else:
+            SC_model = self.get_suitable_SC_model_masked_as_data()
+            SC_data = self.animal_info.SC_data
+            return area_level_correlation(SC_model, SC_data, self.animal, self.dataset_key, diagonal=diagonal)
+
+    def RMAE(self):
+        pass
 # endregion
 
 
@@ -2418,7 +2506,9 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         self.minimal_tol = 1e-3 # 后续改成高精度
         self.bin_num = cf.BIN_NUM
 
-        self.axon_growth_model = AxonGrowthModelLoader(animal, dataset_key, model_timedir)
+        # self.axon_growth_model = AxonGrowthModelLoader(animal, dataset_key, model_timedir)
+        self.axon_growth_model = AxonGrowthModelNew()
+        self.axon_growth_model.set_timedir(model_timedir)
         self.SC_model = self.axon_growth_model.get_suitable_SC_model()
         self.SC_model_masked = self.axon_growth_model.get_suitable_SC_model_masked_as_data()
 
@@ -2635,6 +2725,9 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
 
         cf.set_ax(ax, xlabel='Distance (mm)', ylabel='Angle')
 
+    def RMAE_distance(self, ax):
+        pass
+
 class MultiCaseVisualizer(cf.MultiVisualizerByCol):
     '''
     进行多个动物的可视化
@@ -2646,14 +2739,7 @@ class MultiCaseVisualizer(cf.MultiVisualizerByCol):
         self.animal_num = len(self.animal_list)
         self.animal_and_dataset_key_list = [cf.cat(animal, dataset_key) for animal, dataset_key in zip(self.animal_list, self.dataset_key_list)]
         self.single_visualizer_list = [SingleCaseVisualizer(animal, dataset_key, model_timedir) for animal, dataset_key, model_timedir in zip(self.animal_list, self.dataset_key_list, self.model_timedir_list)]
-        super().__init__(self.single_visualizer_list)
-    
-    def add_subfig_title(self, **kwargs):
-        '''
-        只show动物名
-        '''
-        for animal, dataset_key in zip(self.animal_list, self.dataset_key_list):
-            cf.set_fig_title(self.subfig_dict[cf.cat(animal, dataset_key)], title=animal, **kwargs)
+        super().__init__(self.single_visualizer_list, fig_title_list=animal_list)
 
 
 class PaperFig:
@@ -2923,7 +3009,7 @@ class PaperFig:
         ax_dict['c'] = axes[2]
 
         ax = ax_dict['a']
-        # single_visualizer.direction_preference_performance_scatter(ax, performance_metric='correlation', mode='uniform', diagonal=False)
+        single_visualizer.direction_preference_performance_scatter(ax, performance_metric='correlation', mode='uniform', diagonal=False)
 
         ax = ax_dict['b']
         which_area = 'A19M'
@@ -3002,13 +3088,52 @@ class PaperFig:
         '''
         connection statistics, mouse, macaque and human
         '''
-        pass
+        local_multi_visualizer = cf.MultiVisualizerByRow.from_multi_visualizer_instance(self.multi_visualizer)
+        with local_multi_visualizer.temporary_disable(['marmoset_majka']):
+            get_ax_kwargs = {'nrows': 1, 'ncols': 6}
+            get_suitable_figsize_kwargs = {'nrows': 1, 'ncols': 6}
+            fig_dict, ax_dict = local_multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
+            distance_SC_data_kwargs_list = []
+            distance_SC_model_kwargs_list = []
+            SC_distribution_data_kwargs_list = []
+            SC_distribution_model_kwargs_list = []
+            distance_distribution_data_kwargs_list = []
+            distance_distribution_model_kwargs_list = []
+            for title, ax in ax_dict.items():
+                distance_SC_data_kwargs_list.append({'ax': ax[0], 'data_or_model': 'data', 'dim': '2D'})
+                distance_SC_model_kwargs_list.append({'ax': ax[1], 'data_or_model': 'model', 'dim': '2D'})
+                SC_distribution_data_kwargs_list.append({'ax': ax[2], 'data_or_model': 'data', 'log_scale': True})
+                SC_distribution_model_kwargs_list.append({'ax': ax[3], 'data_or_model': 'model', 'log_scale': True})
+                distance_distribution_data_kwargs_list.append({'ax': ax[4], 'data_or_model': 'data', 'dim': '2D'})
+                distance_distribution_model_kwargs_list.append({'ax': ax[5], 'data_or_model': 'model', 'dim': '2D'})
+            local_multi_visualizer.multi_ax_plot_by_single_visualizer('distance_SC_scatter', distance_SC_data_kwargs_list)
+            local_multi_visualizer.multi_ax_plot_by_single_visualizer('distance_SC_scatter', distance_SC_model_kwargs_list)
+            local_multi_visualizer.multi_ax_plot_by_single_visualizer('SC_distribution', SC_distribution_data_kwargs_list)
+            local_multi_visualizer.multi_ax_plot_by_single_visualizer('SC_distribution', SC_distribution_model_kwargs_list)
+            local_multi_visualizer.multi_ax_plot_by_single_visualizer('distance_distribution', distance_distribution_data_kwargs_list)
+            local_multi_visualizer.multi_ax_plot_by_single_visualizer('distance_distribution', distance_distribution_model_kwargs_list)
+            local_multi_visualizer.add_tag()
+            local_multi_visualizer.add_subfig_title(y=1.2)
+            local_multi_visualizer.rm_redundant_xylabel()
+            local_multi_visualizer.save_fig(self.figdir+'/SI_fig_7')
+
 
     def SI_fig_8(self):
         '''
         area level correlation, all animals
         '''
-        pass
+        local_multi_visualizer = cf.MultiVisualizer.from_multi_visualizer_instance(self.multi_visualizer)
+        get_ax_kwargs = {'nrows': 1}
+        get_suitable_figsize_kwargs = {'nrows': 1, 'ax_width': cf.AX_WIDTH*2}
+        fig_dict, ax_dict = local_multi_visualizer.get_fig_subfig_ax(subfig_ncols=2, subfig_nrows=2, get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
+        kwargs_list = []
+        for title, ax in ax_dict.items():
+            kwargs_list.append({'ax': ax, 'performance_metric': 'correlation', 'sort': True})
+        local_multi_visualizer.multi_ax_plot_by_single_visualizer('area_level_performance', kwargs_list)
+        local_multi_visualizer.add_tag()
+        local_multi_visualizer.add_subfig_title()
+        local_multi_visualizer.rm_redundant_xylabel()
+        local_multi_visualizer.save_fig(self.figdir+'/SI_fig_8')
 
     def SI_fig_9(self):
         '''
@@ -3020,7 +3145,17 @@ class PaperFig:
         '''
         direction preference & performance (correlation)
         '''
-        pass
+        get_ax_kwargs = {'nrows': 1}
+        get_suitable_figsize_kwargs = {'nrows': 1}
+        fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
+        kwargs_list = []
+        for title, ax in ax_dict.items():
+            kwargs_list.append({'ax': ax, 'performance_metric': 'correlation', 'mode': 'uniform', 'diagonal': False})
+        self.multi_visualizer.multi_ax_plot_by_single_visualizer('direction_preference_performance_scatter', kwargs_list)
+        self.multi_visualizer.add_tag()
+        self.multi_visualizer.add_subfig_title()
+        self.multi_visualizer.rm_redundant_xylabel()
+        self.multi_visualizer.save_fig(self.figdir+'/SI_fig_10')
 
     def table_1(self):
         '''
