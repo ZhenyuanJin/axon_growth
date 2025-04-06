@@ -30,6 +30,7 @@ from cProfile import Profile
 from pstats import Stats
 import tracemalloc
 from collections import defaultdict
+import pdb
 
 
 # 数学和科学计算库
@@ -211,7 +212,7 @@ def generate_distance_matrix(animal, dataset_key, dim='2D'):
         for i, center_i in area_center_dict.items():
             for j, center_j in area_center_dict.items():
                 split_distance_matrix.loc[i, j] = np.linalg.norm(center_i - center_j, ord=2)
-        distance_matrix = convert_split_df_to_normal(split_distance_matrix, animal, dataset_key, method='mean')
+        distance_matrix = convert_split_df_to_normal(split_distance_matrix, animal, dataset_key, method='min')
         cf.save_pkl(distance_matrix, animal_info.distance_matrix_dir + 'distance_matrix_2D')
     else:
         raise NotImplementedError
@@ -225,10 +226,47 @@ def generate_clean_area_category(animal, dataset_key):
     animal_info = AnimalInfo(animal, dataset_key)
     area_category = cf.load_df(animal_info.raw_area_category_dir + 'area_category')
     clean_area_category = {}
-    if animal_info.animal_and_dataset_key == 'marmoset_majka':
-        category_map = {'Dorsolateral prefrontal': 'prefrontal', 'Ventrolateral prefrontal': 'prefrontal', 'Orbitofrontal': 'prefrontal', 'Medial prefrontal': 'prefrontal', 'Premotor/motor': 'frontal', 'Anterior cingulated': 'prefrontal', 'Somatosensory': 'parietal', 'Insular': 'insular', 'Auditory': 'temporal', 'Lateral and inferior temporal': '', 'Ventral temporal': 'temporal', 'Posterior parietal': 'parietal', 'Posterior cingulate and retrosplenial': '', 'Visual': 'Occipital', 'Olfactory cortex': ''}
+    if animal_info.animal_and_dataset_key == 'mouse_gamanut':
+        for area, row in area_category.iterrows():
+            clean_area_category[area] = row['area_type']
+        clean_area_category['PL'] = 'Prefrontal'
+        clean_area_category['ORBl'] = 'Prefrontal'
+        clean_area_category['ORBm'] = 'Prefrontal'
+        clean_area_category['FRP'] = 'Prefrontal'
+        clean_area_category['MOs'] = 'Prefrontal'
+        clean_area_category['ILA'] = 'Prefrontal'
+        clean_area_category['ACAd'] = 'Limbic'
+        clean_area_category['ACAv'] = 'Limbic'
+        clean_area_category['RSPv'] = 'Limbic'
+        clean_area_category['RSPagl'] = 'Limbic'
+        clean_area_category['RSPd'] = 'Limbic'
+        clean_area_category['MM'] = 'Limbic'
+    elif animal_info.animal_and_dataset_key == 'marmoset_majka':
+        category_map = {
+        'Visual': 'Occipital', 
+        'Insula and rostral lateral sulcus': 'Insular', 
+        'Lateral and inferior temporal': 'Temporal', 
+        'Orbitofrontal': 'Prefrontal', 
+        'Motor and premotor': 'Frontal', 
+        'Posterior cingulate, medial, and retrosplenial': 'Limbic', 
+        'Medial prefrontal': 'Prefrontal', 
+        'Auditory': 'Temporal', 
+        'Somatosensory': 'Parietal', 
+        'Ventral temporal': 'Temporal', 
+        'Posterior parietal': 'Parietal', 
+        'Ventrolateral prefrontal': 'Prefrontal', 
+        'Dorsolateral prefrontal': 'Prefrontal'
+        }
         for area, row in area_category.iterrows():
             clean_area_category[area] = category_map[row['area_type']]
+    elif animal_info.animal_and_dataset_key in ['macaque_markov29', 'macaque_markov40']:
+        for area, row in area_category.iterrows():
+            clean_area_category[area] = row['area_type']
+        clean_area_category['INSULA'] = 'Insular'
+        clean_area_category['Pi'] = 'Insular'
+    elif animal_info.animal_and_dataset_key == 'human_lariviere':
+        for area, row in area_category.iterrows():
+            clean_area_category[area] = row['simple_area_type']
     else:
         raise NotImplementedError
     cf.save_dict(clean_area_category, animal_info.area_category_dir + 'area_category_dict')
@@ -296,9 +334,6 @@ class AnimalDir:
         self.intrinsic_proportion_dir = self.data_dir + 'intrinsic_proportion/'
         self.injection_to_area_map_dir = self.data_dir + 'injection_to_area_map/'
 
-        # 结果目录
-        self.axon_source_target_dir = 'pass'
-
 
 class AnimalInfo(AnimalDir):
     def __init__(self, animal, dataset_key):
@@ -306,6 +341,9 @@ class AnimalInfo(AnimalDir):
         对于基础信息,直接读取;对于要计算的信息,先尝试读取,如果没有,则计算
         '''
         super().__init__(animal, dataset_key)
+        self.force_re_preprocess = False
+        self.force_re_preprocess = True
+        self._re_preprocess_dict = {} # 运行过的计算,标记为True
 
         SC_type_dict = {'mouse_gamanut': 'FLNe', 'marmoset_majka': 'FLNe', 'marmoset_V4': 'FLNe', 'macaque_markov29': 'FLNe', 'macaque_markov40': 'FLNe', 'human_lariviere': 'Dmri'}
         self.SC_type = SC_type_dict[self.animal_and_dataset_key]
@@ -318,13 +356,29 @@ class AnimalInfo(AnimalDir):
         self.name_to_split_name_dict = name_information['name_to_split_name_dict']
         self.split_name_to_name_dict = name_information['split_name_to_name_dict']
 
-        self.clustered_source_name, self.clustered_target_name = get_source_target_name_in_clustered_order(self.animal, self.dataset_key)
+        self.clustered_source_name, self.clustered_target_name, self.clustered_full_name = get_source_target_full_name_in_clustered_order(self.animal, self.dataset_key)
 
         self.column_mode = 'target' # never be source, this project is always target
 
+    def set_force_re_preprocess(self):
+        '''
+        强制重新运行所有的计算
+        '''
+        self.force_re_preprocess = True
 
+    def _update_re_preprocess_dict(self, prop_name):
+        '''
+        更新re_preprocess_dict
+        '''
+        self._re_preprocess_dict[prop_name] = True
 
-        # self.category_dict = load_category_dict(self.animal, self.dataset_key, category_mode=...)
+    def _raise_for_force_re_preprocess(self, prop_name):
+        '''
+        当force_re_preprocess时退出尝试
+        '''
+        if self.force_re_preprocess and not self._re_preprocess_dict.get(prop_name, False):
+            # raise error, 从而退出try
+            raise ValueError('force_re_preprocess')
 
     @property
     def reordered_full_name(self):
@@ -336,57 +390,71 @@ class AnimalInfo(AnimalDir):
     @property
     def reordered_full_name_clustered(self):
         if self.SC_focus_direction == 'row':
-            return prioritize_sublist(self.full_name, self.clustered_source_name)
+            return prioritize_sublist(self.clustered_full_name, self.clustered_source_name)
         elif self.SC_focus_direction == 'col':
-            return prioritize_sublist(self.full_name, self.clustered_target_name)
+            return prioritize_sublist(self.clustered_full_name, self.clustered_target_name)
 
     @property
     def coords_dict(self):
         try:
+            self._raise_for_force_re_preprocess('coords_dict')
             return load_coords_dict(self.animal, self.dataset_key)
         except:
+            self._update_re_preprocess_dict('coords_dict')
             return generate_coords_polygon(self.animal, self.dataset_key)['coords_dict']
     
     @property
     def polygon_dict(self):
         try:
+            self._raise_for_force_re_preprocess('polygon_dict')
             return load_polygon_dict(self.animal, self.dataset_key)
         except:
+            self._update_re_preprocess_dict('polygon_dict')
             return generate_coords_polygon(self.animal, self.dataset_key)['polygon_dict']
 
     @property
     def whole_cortex_coords(self):
         try:
+            self._raise_for_force_re_preprocess('whole_cortex_coords')
             return load_whole_cortex_coords(self.animal, self.dataset_key)
         except:
+            self._update_re_preprocess_dict('whole_cortex_coords')
             return generate_coords_polygon(self.animal, self.dataset_key)['whole_cortex_coords']
 
     @property
     def whole_cortex_polygon(self):
         try:
+            self._raise_for_force_re_preprocess('whole_cortex_polygon')
             return load_whole_cortex_polygon(self.animal, self.dataset_key)
         except:
+            self._update_re_preprocess_dict('whole_cortex_polygon')
             return generate_coords_polygon(self.animal, self.dataset_key)['whole_cortex_polygon']
 
     @property
     def area_center_dict(self):
         try:
+            self._raise_for_force_re_preprocess('area_center_dict')
             return load_area_center_dict(self.animal, self.dataset_key)
         except:
+            self._update_re_preprocess_dict('area_center_dict')
             return generate_area_center(self.animal, self.dataset_key)
 
     @property
     def name_location_dict(self):
         try:
+            self._raise_for_force_re_preprocess('name_location_dict')
             return load_name_location_dict(self.animal, self.dataset_key)
         except:
+            self._update_re_preprocess_dict('name_location_dict')
             return generate_name_location(self.animal, self.dataset_key)
 
     @property
     def angle_2D(self):
         try:
+            self._raise_for_force_re_preprocess('angle_2D')
             return load_angle_matrix(self.animal, self.dataset_key, dim='2D')
         except:
+            self._update_re_preprocess_dict('angle_2D')
             return generate_angle_matrix(self.animal, self.dataset_key, dim='2D')
 
     @property
@@ -400,15 +468,19 @@ class AnimalInfo(AnimalDir):
     @property
     def distance_2D(self):
         try:
+            self._raise_for_force_re_preprocess('distance_2D')
             return load_distance_matrix(self.animal, self.dataset_key, dim='2D')
         except:
+            self._update_re_preprocess_dict('distance_2D')
             return generate_distance_matrix(self.animal, self.dataset_key, dim='2D')
 
     @property
     def distance_3D(self):
         try:
+            self._raise_for_force_re_preprocess('distance_3D')
             return load_distance_matrix(self.animal, self.dataset_key, dim='3D')
         except:
+            self._update_re_preprocess_dict('distance_3D')
             return generate_distance_matrix(self.animal, self.dataset_key, dim='3D')
 
     @property
@@ -458,15 +530,11 @@ class AnimalInfo(AnimalDir):
         '''
         读取SC数据
         '''
-        if self.animal_and_dataset_key in ['marmoset_majka', 'macaque_markov40']:
-            SC = load_SC(self.animal, self.dataset_key)
-        else:
-            print('not tested')
+        SC = load_SC(self.animal, self.dataset_key)
         
         if self.animal_and_dataset_key in ['human_lariviere']:
             # normalize 使得总和为area_num (对标FLN)
-            SC_sum = SC.sum().sum()
-            SC = SC / SC_sum * SC.shape[0]
+            SC = normalize_SC(SC, animal=self.animal, dataset_key=self.dataset_key)
 
         # 确保SC按照指定的顺序排列
         SC = cf.reorder_df(SC, new_row=self.full_name, new_col=self.full_name)
@@ -475,6 +543,7 @@ class AnimalInfo(AnimalDir):
     @property
     def intrinsic_proportion(self):
         try:
+            self.raise_for_force_re_preprocess()
             return load_intrinsic_proportion(self.animal, self.dataset_key)
         except:
             return generate_intrinsic_proportion(self.animal, self.dataset_key)
@@ -498,16 +567,19 @@ class AnimalInfo(AnimalDir):
     @property
     def area_category(self):
         try:
+            self._raise_for_force_re_preprocess('area_category')
             return load_area_category_dict(self.animal, self.dataset_key)
         except:
+            self._update_re_preprocess_dict('area_category')
             return generate_clean_area_category(self.animal, self.dataset_key)
 
     @property
     def injection_id_to_area_map(self):
         try:
-            # return load_injection_id_to_area_map(self.animal, self.dataset_key)
-            print(1/0)
+            self._raise_for_force_re_preprocess('injection_id_to_area_map')
+            return load_injection_id_to_area_map(self.animal, self.dataset_key)
         except:
+            self._update_re_preprocess_dict('injection_id_to_area_map')
             return generate_injection_id_to_area_map(self.animal, self.dataset_key)
     
     @property
@@ -669,9 +741,9 @@ def get_source_target_full_name(animal, dataset_key):
     return source_name, target_name, full_name
 
 
-def get_source_target_name_in_clustered_order(animal, dataset_key):
+def get_source_target_full_name_in_clustered_order(animal, dataset_key):
     '''
-    获取source_name, target_name, 按照clustered order
+    获取source_name, target_name, full_name, 按照clustered order
     '''
     animal_and_dataset_key = animal + '_' + dataset_key
     if animal_and_dataset_key == 'mouse_gamanut':
@@ -698,7 +770,11 @@ def get_source_target_name_in_clustered_order(animal, dataset_key):
         clustered_source_name = ['86', '96', '49', '90', '21', '30', '42', '18', '84', '65', '77', '62', '5', '2', '80', '6', '48', '7', '43', '15', '16', '20', '9', '70', '25', '82', '14', '8', '17', '28', '57', '59', '83', '37', '61', '45', '64', '39', '12', '92', '79', '10', '29', '58', '1', '40', '69', '75', '34', '94', '66', '91', '72', '23', '71', '88', '27', '44', '60', '31', '4', '47', '11', '38', '76', '33', '93', '19', '46', '56', '63', '89', '32', '36', '53', '3', '52', '35', '74', '67', '87', '73', '95', '24', '22', '68', '41', '51', '50', '54', '78', '81', '13', '26', '55', '85']
         clustered_target_name = ['48', '25', '58', '14', '20', '21', '9', '15', '67', '74', '62', '35', '73', '49', '81', '95', '19', '46', '33', '41', '50', '64', '79', '28', '39', '92', '12', '29', '10', '45', '31', '88', '66', '72', '27', '91', '4', '34', '94', '18', '40']
 
-    return clustered_source_name, clustered_target_name
+    if len(clustered_target_name) > len(clustered_source_name):
+        clustered_full_name = clustered_target_name
+    else:
+        clustered_full_name = clustered_source_name
+    return clustered_source_name, clustered_target_name, clustered_full_name
 
 
 def get_full_split_name(name_to_split_name_dict):
@@ -856,6 +932,7 @@ def get_name_dict(animal, dataset_key):
 
     if animal_and_dataset_key == 'human_lariviere':
         for name in full_name:
+            name_to_split_name_dict[name] = [name]
             if name in ['10pp']:
                 name_to_split_name_dict[name] = ['10pp--1', '10pp--2']
             if name in ['23c']:
@@ -890,6 +967,7 @@ def get_name_dict(animal, dataset_key):
         full_split_name = get_full_split_name(name_to_split_name_dict)
 
         for name in full_split_name:
+            split_name_to_name_dict[name] = name
             if name in ['10pp--1', '10pp--2']:
                 split_name_to_name_dict[name] = '10pp'
             if name in ['23c--1', '23c--2']:
@@ -1036,7 +1114,11 @@ def load_area_category_dict(animal, dataset_key):
     dataset_key: str, 数据集的名称
     '''
     animal_dir = AnimalDir(animal, dataset_key)
-    return cf.load_pkl(animal_dir.area_category_dict_dir + '/area_category_dict')
+    return cf.load_pkl(animal_dir.area_category_dir + '/area_category_dict')
+
+
+def get_area_category_in_order():
+    return ['Occipital', 'Temporal', 'Parietal', 'Limbic', 'Insular', 'Frontal', 'Prefrontal']
 
 
 def load_injection_id_to_area_map(animal, dataset_key):
@@ -1110,19 +1192,6 @@ def get_molnar_performance(animal, dataset_key):
 
 
 # region load model parameters & results
-def load_axon_source_target(outcomes_dir):
-    '''
-    读取轴突生长模型的source和target
-    '''
-    try:
-        r = cf.load_dict_separate(outcomes_dir+'/axon_source_target/axon_source_target')
-        cf.print_title('successfully load axon source and target')
-        return r, True
-    except:
-        cf.print_title('failed to load axon source and target')
-        return None, False
-
-
 def load_SC_model_dict(outcomedir):
     '''
     读取SC模型的参数
@@ -1141,15 +1210,21 @@ def whether_in_area(p, polygon):
     return polygon.intersects(point)
 
 
-def pointpats_random_poisson(hull, intensity=None, size=None, seed=None):
+def pointpats_random_poisson(hull, intensity=None, size=None, seed=None, rng=None):
     '''
     https://pysal.org/pointpats/_modules/pointpats/random.html#poisson
 
     but with random seed enabled
     '''
-    if seed is None:
+    if rng is not None and seed is not None:
+        raise ValueError("Cannot specify both rng and seed")
+    if rng is None and seed is None:
         seed = cf.get_time_seed()
-    rng = cf.get_local_rng(seed=seed)
+        rng = cf.get_local_rng(seed=seed)
+    if rng is None and seed is not None:
+        rng = cf.get_local_rng(seed=seed)
+    if rng is not None and seed is None:
+        pass
 
     if isinstance(hull, np.ndarray):
         if hull.shape == (4,):
@@ -1277,18 +1352,18 @@ def part_generate_axon_source_target(animal, dataset_key, direction_method, leng
     if use_part_index_as_seed:
         seed = part_index
     else:
-        seed = cf.get_time_seed()
+        seed = cf.get_time_seed() * part_index # 保证每个part的seed不同
     rng = cf.get_local_rng(seed=seed)
 
     neuron_num = get_neuron_num(neuron_density=point_density, polygon_dict=polygon_dict, total_num=int(na), animal=animal, dataset_key=dataset_key)
     direction_method_type = get_direction_method_type(direction_method)
 
     for area, polygon in polygon_dict.items():
-        for i in range(neuron_num[area]):
-            s = pointpats.random.poisson(polygon, size=1)
+        multi_s = pointpats_random_poisson(polygon, size=neuron_num[area], rng=rng)
+        for s in multi_s:
             index_s = [area]
             index_t = ['out_of_areas'] # 默认值,确保进入循环
-            try_num =0
+            try_num = 0
             # to avoid endless iteration, if try_num is large, give up
             while 'out_of_areas' in index_t and try_num < max_iteration:
                 try_num = try_num + 1
@@ -1321,14 +1396,14 @@ def part_generate_axon_source_target(animal, dataset_key, direction_method, leng
                     direction_growth = forces_sum / np.linalg.norm(forces_sum, ord=2) # direction of the axon
                 else:
                     if direction_method == 'random':
-                        angle = np.random.rand(1) * 2 * np.pi
+                        angle = rng.rand(1) * 2 * np.pi
                         direction_growth = np.array([np.cos(angle), np.sin(angle)])
                         direction_growth = direction_growth.reshape((2,))
 
                 if length_method == 'exponential':
-                    length = np.random.exponential(scale=split_length_params['Lambda'][area]) # length of the axon
+                    length = rng.exponential(scale=split_length_params['Lambda'][area]) # length of the axon
                 if length_method == 'power_law':
-                    length = np.random.pareto(split_length_params['Lambda'][area])
+                    length = rng.pareto(split_length_params['Lambda'][area])
                 t = s + length * direction_growth # terminal position of the axon
                 
                 # check whether t is in the whole cortex
@@ -1351,7 +1426,6 @@ def part_generate_axon_source_target(animal, dataset_key, direction_method, leng
         indices_tt = indices_bb
     
     ss = np.array(ss)
-    print(isinstance(ss, np.ndarray))
     tt = np.array(tt)
     indices_ss = np.array(indices_ss).flatten()
     indices_tt = np.array(indices_tt).flatten()
@@ -1445,265 +1519,7 @@ def SC_type_to_SC_dict_key_include_diagonal(SC_type):
     return SC_dict_key
 
 
-class AxonGrowthModel:
-    def __init__(self):
-        self.value_dir_key = ['animal_and_dataset_key']
-
-    def set_params(self, basedir, animal, dataset_key, direction_method, length_method, direction_params, length_params, na, model_type='send', use_neuron_density_to_generate=False, try_load_previous_results=True, process_num=1, use_part_index_as_seed=True, max_iteration=10):
-        '''
-        basedir: str, 基础的目录
-        animal: str, 动物的名称
-        dataset_key: str, 数据集的名称
-        direction_method: str, 方向的方法
-        length_method: str, 长度的方法
-        direction_params: dict, 方向的参数
-        length_params: dict, 长度的参数
-        na: int, 神经元的数目
-        use_density_to_generate: bool, 是否使用密度来生成神经元
-        try_load_previous_results: bool, 是否尝试加载之前的运行结果
-        '''
-        self.basedir = basedir
-        self.animal = animal
-        self.dataset_key = dataset_key
-        self.direction_method = direction_method
-        self.length_method = length_method
-        self.direction_params = direction_params
-        self.length_params = length_params
-        self.na = na
-        self.model_type = model_type
-        self.use_neuron_density_to_generate = use_neuron_density_to_generate
-        self.try_load_previous_results = try_load_previous_results
-        self.process_num = process_num
-        self.use_part_index_as_seed = use_part_index_as_seed
-        self.max_iteration = max_iteration
-
-        self.search_params()
-
-        self.animal_info = AnimalInfo(animal, dataset_key)
-
-        if use_neuron_density_to_generate:
-            self.point_density = self.animal_info.neuron_density.copy()
-        else:
-            self.point_density = cf.create_dict(self.animal_info.full_name, default_value=1)
-
-    @property
-    def outcomes_dir(self):
-        '''
-        保证outcomes_dir动态更新
-        '''
-        return cf.pj(self.timedir, 'outcomes')
-
-    def search_params(self):
-        '''
-        寻找已有的使用相同参数的结果
-        '''
-        self.params = {'animal_and_dataset_key': cf.cat(self.animal, self.dataset_key), 'direction_method': self.direction_method, 'length_method': self.length_method, 'direction_params': self.direction_params, 'length_params': self.length_params, 'na': self.na, 'model_type': self.model_type, 'use_neuron_density_to_generate': self.use_neuron_density_to_generate}
-        
-        if self.try_load_previous_results:
-            self.timedir, self.params_exist = cf.search_dict_subdir(dict_data=self.params, basedir=self.basedir, pkl_name='params', value_dir_key=self.value_dir_key, after_subdir='params')
-        else:
-            self.params_exist = False
-
-    def save_params(self):
-        '''
-        保存参数
-        '''
-        self.timedir, _ = cf.save_timed_dir_dict(dict_data=self.params, basedir=self.basedir, dict_name='params', value_dir_key=self.value_dir_key, after_timedir='params')
-
-    def run_model(self):
-        '''
-        运行模型
-        '''
-        if self.params_exist:
-            # 如果params存在,则尝试读取axon
-            self.axon_dict, self.axon_dict_exist = load_axon_source_target(self.outcomes_dir)
-        else:
-            # 如果params不存在,则重新生成
-            self.axon_dict_exist = False
-
-        if self.axon_dict_exist == False:
-            # 运行axon_generation
-            timer = cf.Timer(title='run axon growth model')
-            timer.start()
-
-            generation_kwargs = {'animal': self.animal, 'dataset_key': self.dataset_key, 'direction_method': self.direction_method, 'length_method': self.length_method, 'direction_params': self.direction_params, 'length_params': self.length_params, 'na': int(self.na/self.process_num), 'point_density': self.point_density, 'model_type': self.model_type, 'use_part_index_as_seed': self.use_part_index_as_seed, 'max_iteration': self.max_iteration}
-            generate_for_list = list(range(self.process_num))
-            axon_list = cf.multi_process_list_for(process_num=self.process_num, func=part_generate_axon_source_target, kwargs=generation_kwargs, for_list=generate_for_list, for_idx_name='part_index')
-            # 合并结果
-            self.axon_dict = cf.create_dict(keys=['ss', 'tt', 'indices_ss', 'indices_tt'], default_value=[])
-            for r in axon_list:
-                for k, v in r.items():
-                    self.axon_dict[k].extend(v)
-            # 将所有结果变成array
-            self.axon_dict = {k: np.array(v) for k, v in self.axon_dict.items()}
-            # 保存结果
-            self.save_axon_dict()
-
-            timer.stop()        
-
-    def save_axon_dict(self):
-        '''
-        保存axon_dict
-        '''
-        # 此时保存参数,减少出现只有参数没有任何结果的文件夹
-        self.save_params()
-        # 保存结果
-        cf.save_dict_separate(self.axon_dict, self.outcomes_dir+'/axon_source_target/axon_source_target')
-
-    @property
-    def SC_model_dict(self):
-        '''
-        获取SC_model_dict
-        '''
-        try:
-            return load_SC_model_dict(self.outcomes_dir)
-        except:
-            return generate_SC_from_axon_source_target(self.animal, self.dataset_key, outcomes_dir=self.outcomes_dir, indices_ss=self.axon_dict['indices_ss'], indices_tt=self.axon_dict['indices_tt'])
-
-    def get_suitable_SC_model(self):
-        '''
-        获取和数据匹配的SC_model
-        '''
-        SC_dict_key = SC_type_to_SC_dict_key(self.animal_info.SC_type)
-        return self.SC_model_dict[SC_dict_key]
-
-    def get_masked_SC_as_data(self, SC_dict_key):
-        masked_SC = self.SC_model_dict[SC_dict_key].copy()
-        # 将source_name和target_name以外的所有值变为nan
-        for r in masked_SC.index:
-            for c in masked_SC.columns:
-                if r not in self.animal_info.source_name or c not in self.animal_info.target_name:
-                    masked_SC.loc[r, c] = np.nan
-        return masked_SC
-
-    def get_suitable_SC_model_masked_as_data(self):
-        return self.get_masked_SC_as_data(SC_type_to_SC_dict_key(self.animal_info.SC_type))
-
-    def get_area_level_correlation(self, diagonal=False):
-        '''
-        获取区域级别的相关性
-        '''
-        if diagonal:
-            raise NotImplementedError
-        else:
-            SC_model = self.get_suitable_SC_model_masked_as_data()
-            SC_data = self.animal_info.SC_data
-            return area_level_correlation(SC_model, SC_data, self.animal, self.dataset_key, diagonal=diagonal)
-
-    def RMAE(self):
-        pass
-
-    def useless_code():
-        pass
-
-    @cf.to_be_improved
-    def force_vector(self, points, beta, centers):
-        """
-        For each point (acctually s), using force_direction to get the target(t). The length between t and s should be 1.
-        notation: s: initial positions of the axon
-            t: terminal positions of the axon
-            centers: positions of area centers
-        """
-        tt=[]
-        if self.direction=='song':
-            for s in points:
-                forces=[]
-                # for center_index in self.all_name_coords:
-                for center_index in centers.keys():
-                    Ri = centers[center_index]
-                    s = np.array(s)
-                    forcei = (s-Ri)/(np.linalg.norm((s-Ri),ord=2)**(beta[center_index]+1))
-                    forces.append(forcei)
-                if self.model_type=='send':
-                    forces_sum = -np.sum(np.array(forces),axis=0)
-                else:
-                    forces_sum = np.sum(np.array(forces),axis=0)
-                direction_growth = forces_sum/np.linalg.norm(forces_sum,ord=2) # direction of the axon
-                t = s+direction_growth # terminal position of the axon
-                tt.append(t)
-        if self.direction=='song_without_self':
-            for s in points:
-                forces=[]
-                # for center_index in self.all_name_coords:
-                for center_index in centers.keys():
-                    if center_index!=self.polygon_index([s])[0]:
-                        Ri = centers[center_index]
-                        s = np.array(s)
-                        forcei = (s-Ri)/(np.linalg.norm((s-Ri),ord=2)**(beta[center_index]+1))
-                        forces.append(forcei)
-                if self.model_type=='send':
-                    forces_sum = -np.sum(np.array(forces),axis=0)
-                else:
-                    forces_sum = np.sum(np.array(forces),axis=0)
-                direction_growth = forces_sum/np.linalg.norm(forces_sum,ord=2) # direction of the axon
-                t = s+direction_growth # terminal position of the axon
-                tt.append(t)
-        if self.direction=='song_exclude_self':
-            for s in points:
-                forces=[]
-                # for center_index in self.all_name_coords:
-                for center_index in centers.keys():
-                    if not self.whether_in_area(centers[center_index], self.pgon[self.polygon_index([s])[0]]):
-                        Ri = centers[center_index]
-                        s = np.array(s)
-                        forcei = (s-Ri)/(np.linalg.norm((s-Ri),ord=2)**(beta[center_index]+1))
-                        forces.append(forcei)
-                if self.model_type=='send':
-                    forces_sum = -np.sum(np.array(forces),axis=0)
-                else:
-                    forces_sum = np.sum(np.array(forces),axis=0)
-                direction_growth = forces_sum/np.linalg.norm(forces_sum,ord=2) # direction of the axon
-                t = s+direction_growth # terminal position of the axon
-                tt.append(t)
-        if self.direction=='exponential':
-            for s in points:
-                forces=[]
-                # for center_index in self.all_name_coords:
-                for center_index in centers.keys():
-                    Ri = centers[center_index]
-                    s = np.array(s)
-                    forcei = (s-Ri)/np.exp(np.linalg.norm((s-Ri),ord=2)*(beta[center_index]))
-                    forces.append(forcei)
-                if self.model_type=='send':
-                    forces_sum = -np.sum(np.array(forces),axis=0)
-                else:
-                    forces_sum = np.sum(np.array(forces),axis=0)
-                direction_growth = forces_sum/np.linalg.norm(forces_sum,ord=2) # direction of the axon
-                t = s+direction_growth # terminal position of the axon
-                tt.append(t)
-        if self.direction=='exponential_without_self':
-            for s in points:
-                forces=[]
-                # for center_index in self.all_name_coords:
-                for center_index in centers.keys():
-                    if center_index!=self.polygon_index([s])[0]:
-                        Ri = centers[center_index]
-                        s = np.array(s)
-                        forcei = (s-Ri)/np.exp(np.linalg.norm((s-Ri),ord=2)*(beta[center_index]))
-                        forces.append(forcei)
-                if self.model_type=='send':
-                    forces_sum = -np.sum(np.array(forces),axis=0)
-                else:
-                    forces_sum = np.sum(np.array(forces),axis=0)
-                direction_growth = forces_sum/np.linalg.norm(forces_sum,ord=2) # direction of the axon
-                t = s+direction_growth # terminal position of the axon
-                tt.append(t)
-        return tt
-
-
-class AxonGrowthModelLoader(AxonGrowthModel):
-    def __init__(self, animal, dataset_key, timedir):
-        '''
-        设置timedir,可以输入已经运行得到结果的timedir,此时可以直接运行各类analyze的方法
-        '''
-        super().__init__()
-        self.animal = animal
-        self.dataset_key = dataset_key
-        self.timedir = timedir
-        self.animal_info = AnimalInfo(animal, dataset_key)
-
-
-class AxonGrowthModelNew(cf.MetaModel):
+class AxonGrowthModel(cf.MetaModel):
     def __init__(self):
         super().__init__()
         self.set_value_dir_both_dir_key(['animal_and_dataset_key'])
@@ -1729,6 +1545,19 @@ class AxonGrowthModelNew(cf.MetaModel):
     def set_params(self, params):
         super().set_params(params)
         self.animal_info = AnimalInfo(self.animal, self.dataset_key)
+
+    def get_unique_Lambda(self):
+        '''
+        获取长度的参数
+        '''
+        Lambda = self.length_params['Lambda']
+        if isinstance(Lambda, dict):
+            if len(set(Lambda.values())) == 1:
+                return list(Lambda.values())[0]
+            else:
+                raise ValueError('Lambda is not unique')
+        else:
+            return Lambda
 
     def set_direct_results_key(self):
         self.direct_results_key = ['ss', 'tt', 'indices_ss', 'indices_tt']
@@ -1787,8 +1616,16 @@ class AxonGrowthModelNew(cf.MetaModel):
             SC_data = self.animal_info.SC_data
             return area_level_correlation(SC_model, SC_data, self.animal, self.dataset_key, diagonal=diagonal)
 
-    def RMAE(self):
-        pass
+    def get_relative_error(self, diagonal=False):
+        '''
+        获取相对误差
+        '''
+        if diagonal:
+            raise NotImplementedError
+        else:
+            SC_model = self.get_suitable_SC_model_masked_as_data()
+            SC_data = self.animal_info.SC_data
+            return data_model_relative_error(SC_model, SC_data, self.animal, self.dataset_key, diagonal=diagonal)
 # endregion
 
 
@@ -1829,6 +1666,28 @@ def area_name_to_index_array(area_name_list, ordered_area_name):
     return index_array
 
 
+# def convert_split_df_to_normal(split_df, animal, dataset_key, method='sum'):
+#     '''
+#     将以分裂的脑区作为column和row的df转换为正常的
+#     '''
+#     animal_info = AnimalInfo(animal, dataset_key)
+#     full_name = animal_info.full_name
+#     full_split_name = animal_info.full_split_name
+#     split_name_to_name_dict = animal_info.split_name_to_name_dict
+
+#     df = cf.get_zero_df(index=full_name, columns=full_name)
+#     count_split_df = cf.get_zero_df(index=full_name, columns=full_name)
+#     for row in full_split_name:
+#         for col in full_split_name:
+#             merge_row = split_name_to_name_dict[row]
+#             merge_col = split_name_to_name_dict[col]
+#             df.loc[merge_row, merge_col] += split_df.loc[row, col]
+#             count_split_df.loc[merge_row, merge_col] += 1
+#     if method == 'sum':
+#         pass
+#     elif method == 'mean':
+#         df = df / count_split_df
+#     return df
 def convert_split_df_to_normal(split_df, animal, dataset_key, method='sum'):
     '''
     将以分裂的脑区作为column和row的df转换为正常的
@@ -1838,20 +1697,30 @@ def convert_split_df_to_normal(split_df, animal, dataset_key, method='sum'):
     full_split_name = animal_info.full_split_name
     split_name_to_name_dict = animal_info.split_name_to_name_dict
 
-    df = cf.get_zero_df(index=full_name, columns=full_name)
-    count_split_df = cf.get_zero_df(index=full_name, columns=full_name)
+    value_dict = defaultdict(list)
+
     for row in full_split_name:
         for col in full_split_name:
             merge_row = split_name_to_name_dict[row]
             merge_col = split_name_to_name_dict[col]
-            df.loc[merge_row, merge_col] += split_df.loc[row, col]
-            count_split_df.loc[merge_row, merge_col] += 1
-    if method == 'sum':
-        pass
-    elif method == 'mean':
-        df = df / count_split_df
-    return df
+            value = split_df.loc[row, col]
+            value_dict[(merge_row, merge_col)].append(value)
 
+    index, columns = full_name, full_name
+    if method == 'sum':
+        data = {k: np.nansum(v) for k, v in value_dict.items()}
+    elif method == 'mean':
+        data = {k: np.nanmean(v) for k, v in value_dict.items()}
+    elif method == 'min':
+        data = {k: np.nanmin(v) for k, v in value_dict.items()}
+    else:
+        raise ValueError(f"Unsupported method: {method}")
+
+    df = pd.DataFrame(0, index=index, columns=columns, dtype=float)
+    for (row, col), value in data.items():
+        df.loc[row, col] = value
+
+    return df
 
 def broadcast_value_to_split_area(value_dict, animal, dataset_key):
     '''
@@ -1887,12 +1756,18 @@ def CCM_to_FLN(CCM):
 
 def normalize_SC(SC, animal, dataset_key):
     '''
-    如果SC是Dmri数据,需要将其正则化
+    将SC正则化
     '''
     animal_info = AnimalInfo(animal, dataset_key)
-    if animal_info.SC_type == 'Dmri':
-        raise NotImplementedError
-    return SC
+    
+    sub_SC = cf.get_sub_df(df=SC, row_list=animal_info.source_name, col_list=animal_info.target_name)
+    SC_sum = sub_SC.sum().sum()
+    if animal_info.SC_focus_direction == 'col':
+        new_SC = SC / SC_sum * len(animal_info.target_name)
+    elif animal_info.SC_focus_direction == 'row':
+        new_SC = SC / SC_sum * len(animal_info.source_name)
+
+    return new_SC
 
 
 def scale_SC_to_int(SC, minimal_tol=None):
@@ -2068,6 +1943,12 @@ def data_model_correlation(SC_data, SC_model, animal, dataset_key, diagonal=Fals
 
 
 def data_model_relative_error(SC_data, SC_model, animal, dataset_key, diagonal=False):
+    '''
+    计算数据和模型之间的相对误差
+    
+    注意:
+    输出的维度是source_name和target_name的shape
+    '''
     animal_info = AnimalInfo(animal, dataset_key)
     target_name = animal_info.target_name
     source_name = animal_info.source_name
@@ -2188,6 +2069,59 @@ def get_direction_preference(SC_data, animal, dataset_key, mode='uniform', SC_mo
         model_angle_dict = get_area_level_property_repeated_by_SC(SC_model, angle_matrix, animal, dataset_key)
         direction_preference_dict = {area: cf.get_ks(data_angle_dict[area], model_angle_dict[area]) for area in data_angle_dict.keys()}
     return direction_preference_dict
+
+
+def get_category_longrange_connection(SC_data, animal, dataset_key, longrange_threshold, dim='2D'):
+    '''
+    获取每个category的长程连接数
+    '''
+    animal_info = AnimalInfo(animal, dataset_key)
+
+    if dim == '2D':
+        distance_matrix = animal_info.distance_2D
+    elif dim == '3D':
+        distance_matrix = animal_info.distance_3D
+
+    longrange_SC_data = SC_data[distance_matrix > longrange_threshold]
+    
+    longrange_connection_sum = {}
+    longrange_possible_sum = {} # 可能的长程连接数(包括数据中有连接和没有连接的)
+
+    for source in animal_info.source_name:
+        source_category = animal_info.area_category[source]
+        for target in animal_info.target_name:
+            target_category = animal_info.area_category[target]
+            if source_category != target_category:
+                longrange_possible_sum[source_category] = longrange_possible_sum.get(source_category, 0) + 1
+                longrange_possible_sum[target_category] = longrange_possible_sum.get(target_category, 0) + 1
+
+                # 判断是否是nan
+                if np.isnan(longrange_SC_data.loc[source, target]):
+                    continue
+                else:
+                    longrange_connection_sum[source_category] = longrange_connection_sum.get(source_category, 0) + longrange_SC_data.loc[source, target]
+                    longrange_connection_sum[target_category] = longrange_connection_sum.get(target_category, 0) + longrange_SC_data.loc[source, target]
+    
+    # 计算比例
+    longrange_connection_proportion = {}
+    for category in longrange_connection_sum.keys():
+        longrange_connection_proportion[category] = longrange_connection_sum[category] / longrange_possible_sum[category]
+
+    results = {
+        'longrange_connection_sum': longrange_connection_sum,
+        'longrange_possible_sum': longrange_possible_sum,
+        'longrange_connection_proportion': longrange_connection_proportion
+    }
+    return results
+
+
+def get_category_longrange_connection_new():
+    '''
+    获取每个category的长程连接数
+
+    本质上,long range connection 需要和 model对比才能最有意义
+    '''
+    pass
 
 
 def max_distance_in_polygon(vertices):
@@ -2370,7 +2304,7 @@ def draw_mask_for_unmeasured_block(ax, animal, dataset_key):
     source_num = len(source_name)
     color = cf.GRAY
     cmap = cf.get_cmap([color])
-    unmeasured_matrix = np.zeros((source_num, source_num))
+    unmeasured_matrix = np.full((source_num, source_num), np.nan)
     if target_num < source_num:
         for i in range(source_num):
             if i < target_num:
@@ -2424,6 +2358,10 @@ def visualize_connection_matrix_heatmap(ax_data, ax_model, matrix_data, matrix_m
     
     local_matrix_data = cf.reorder_df(local_matrix_data, reordered_full_name_clustered, reordered_full_name_clustered)
     local_matrix_model = cf.reorder_df(local_matrix_model, reordered_full_name_clustered, reordered_full_name_clustered)
+
+    # 将nan变为0
+    local_matrix_data = cf.process_nan(local_matrix_data, nan_policy='fill', fill_value=0.)
+    local_matrix_model = cf.process_nan(local_matrix_model, nan_policy='fill', fill_value=0.)
 
     ticks = [vmin, vmax]
 
@@ -2492,6 +2430,27 @@ def visualize_macaque_marmoset_performance_similarity(ax, macaque_performance_di
     cf.set_ax(ax, xlabel='Performance (macaque)', ylabel='Performance (marmoset)')
 
 
+def visualize_scaling_law(ax, single_visualizer_list, dim='2D'):
+    optimal_params = cf.load_dict('../../results/optimal_params/optimal_params')
+    Lambda_list = []
+    max_distance_list = []
+    for single_visualizer in single_visualizer_list:
+        animal_and_dataset_key = single_visualizer.animal_and_dataset_key
+
+        if dim == '2D':
+            distance_matrix = single_visualizer.animal_info.distance_2D
+        elif dim == '3D':
+            distance_matrix = single_visualizer.animal_info.distance_3D
+        max_distance = np.nanmax(distance_matrix.values)
+        max_distance_list.append(max_distance)
+
+        Lambda = optimal_params[animal_and_dataset_key]['Lambda']
+        Lambda_list.append(Lambda)
+    
+    cf.plt_linregress(ax, x=max_distance_list, y=Lambda_list, xlog=True, ylog=True, show_list=['slope'], scatter_kwargs={'marker': 'o'})
+    cf.set_ax(ax, xlabel='Max distance (mm)', ylabel='Optimal $\Lambda$ (mm)', xlog=True, ylog=True)
+
+
 class SingleCaseVisualizer(cf.SingleVisualizer):
     '''
     进行单个动物的可视化
@@ -2500,14 +2459,14 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         super().__init__(title=cf.cat(animal, dataset_key))
         self.animal = animal
         self.dataset_key = dataset_key
+        self.animal_and_dataset_key = cf.cat(animal, dataset_key)
         self.animal_info = AnimalInfo(animal, dataset_key)
         self.SC_data = self.animal_info.SC_data
         self.model_timedir = model_timedir
         self.minimal_tol = 1e-3 # 后续改成高精度
         self.bin_num = cf.BIN_NUM
 
-        # self.axon_growth_model = AxonGrowthModelLoader(animal, dataset_key, model_timedir)
-        self.axon_growth_model = AxonGrowthModelNew()
+        self.axon_growth_model = AxonGrowthModel()
         self.axon_growth_model.set_timedir(model_timedir)
         self.SC_model = self.axon_growth_model.get_suitable_SC_model()
         self.SC_model_masked = self.axon_growth_model.get_suitable_SC_model_masked_as_data()
@@ -2582,10 +2541,10 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
             hist = plt_hist_instance.hist
             mid_point = plt_hist_instance.mid_point
             regress_dict = cf.plt_linregress(ax, x=mid_point, y=hist, ylog=True, line_color=cf.BLACK, show_scatter=False, show_list=[], **linregress_kwargs)
-            regress_dict['Lambda'] = -1 / (regress_dict['slope'] * np.log(10)) # transform to e base to get lambda
+            regress_dict['$\Lambda$'] = -1 / (regress_dict['slope'] * np.log(10)) # transform to e base to get lambda
             unit_dict = cf.create_dict(keys=regress_dict.keys(), default_value=None)
-            unit_dict['Lambda'] = 'mm'
-            cf.add_text_by_dict(ax, regress_dict, show_list=['p', 'Lambda'], unit_dict=unit_dict, text_x=0.6, text_y=0.9)
+            unit_dict['$\Lambda$'] = 'mm'
+            cf.add_text_by_dict(ax, regress_dict, show_list=['p', '$\Lambda$'], unit_dict=unit_dict, text_x=0.6, text_y=0.9)
         cf.set_ax(ax, xlabel=f'Distance {dim} (mm)', ylog=True, title=data_or_model)
 
     def angle_distribution(self, ax, data_or_model, dim='2D', distribution_kwargs=None):
@@ -2601,7 +2560,7 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         if dim == '2D':
             angle_matrix = self.animal_info.angle_2D
             visualize_distribution_repeated_by_SC(ax, angle_matrix, SC, minimal_tol=self.minimal_tol, distribution_type='CDF', distribution_kwargs=distribution_kwargs)
-            cf.set_ax(ax, xlabel='Angle', ylabel='CDF')
+            cf.set_ax(ax, xlabel='Angle', ylabel='CDF', legend_loc='lower right')
         elif dim == '3D':
             angle_3D_dict = self.animal_info.angle_3D
             azim_matrix = angle_3D_dict['azim_matrix']
@@ -2623,11 +2582,13 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
 
             intrinsic_proportion_data = self.animal_info.intrinsic_proportion
             intrinsic_proportion_model = get_intrinsic_proportion_from_SCt(self.axon_growth_model.SC_model_dict['FLNt'], self.animal, self.dataset_key)
-            intrinsic_proportion_data_flatten = [intrinsic_proportion_data[area] for area in self.animal_info.target_name]
-            intrinsic_proportion_model_flatten = [intrinsic_proportion_model[area] for area in self.animal_info.target_name]
+            intrinsic_proportion_data_flatten = [intrinsic_proportion_data[area] for area in self.animal_info.clustered_target_name]
+            intrinsic_proportion_model_flatten = [intrinsic_proportion_model[area] for area in self.animal_info.clustered_target_name]
             x = range(len(target_name))
             cf.plt_two_side_bar(ax, x, intrinsic_proportion_data_flatten, intrinsic_proportion_model_flatten, color1=DATA_COLOR, color2=MODEL_COLOR, label1='data', label2='model')
-            cf.set_ax(ax, xlabel='Area', ylabel='Intrinsic proportion', xtick=x, xtick_label=target_name, xtick_rotation=90)
+            corr = cf.get_corr(intrinsic_proportion_data_flatten, intrinsic_proportion_model_flatten)
+            cf.add_text(ax, text='Corr='+str(round(corr, 3)))
+            cf.set_ax(ax, xlabel='Area', ylabel='Intrinsic proportion', xtick=x, xtick_label=target_name, xtick_rotation=90, ylim=[-1, 1])
 
     def distance_SC_scatter(self, ax, data_or_model, dim='2D'):
         if dim == '2D':
@@ -2668,8 +2629,16 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         cf.sns_hist(ax, data=SC.values.flatten(), bins=self.bin_num, log_scale=log_scale, **distribution_kwargs)
         cf.set_ax(ax, xlabel='SC', title=data_or_model)
 
-    def retrograde_neuron(self, ax):
-        pass
+    def retrograde_neuron(self, ax, pos, radius):
+        ss = self.axon_growth_model.get_value_from_direct_results('ss')
+        tt = self.axon_growth_model.get_value_from_direct_results('tt')
+        
+        tt_pos_distance = np.linalg.norm(tt - pos, axis=1)
+        in_circle_index = np.where(tt_pos_distance < radius)[0]
+        ss_corresponding = ss[in_circle_index]
+        
+        cf.plt_scatter(ax, ss_corresponding[:, 0], ss_corresponding[:, 1], color=cf.BLACK, label='ss', s=1)
+        show_area_boundary(ax, animal=self.animal, dataset_key=self.dataset_key, show_area_name=True, text_fontsize=cf.FONT_SIZE/3, edgecolor=cf.BLACK)
 
     def rm_longrange_correlation_change(self, ax, rm_mode='data', dim='2D', point_num=100):
         if dim == '2D':
@@ -2686,10 +2655,16 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         corr_list_logged_version = get_rm_longrange_correlation_change(SC_data_logged, SC_model_logged, distance_matrix, self.animal, self.dataset_key, point_num=point_num, rm_mode=rm_mode)
         cf.plt_line(ax, x=np.linspace(0, np.nanmax(distance_matrix.values), point_num), y=corr_list, color=cf.BLUE, label='Original')
         cf.plt_line(ax, x=np.linspace(0, np.nanmax(distance_matrix.values), point_num), y=corr_list_logged_version, color=cf.ORANGE, label='Logged')
+        cf.add_vline(ax, x=self.axon_growth_model.get_unique_Lambda() * 5, color=cf.RED, linestyle='--', label='$5\Lambda$')
         cf.set_ax(ax, xlabel=f'Threshold (mm)', ylabel='Correlation', legend_loc='lower right')
 
-    def category_long_range_proportion(self, ax):
-        pass
+    def category_long_range_SC(self, ax):
+        results = get_category_longrange_connection(self.SC_data, self.animal, self.dataset_key, longrange_threshold=self.axon_growth_model.get_unique_Lambda() * 5, dim='2D')
+        longrange_connection_sum = results['longrange_connection_sum']
+        area_category_in_order = get_area_category_in_order()
+
+        cf.plt_bar(ax, range(len(area_category_in_order)), [longrange_connection_sum[area] for area in area_category_in_order])
+        cf.set_ax(ax, ylabel='Long range sum', xtick=range(len(area_category_in_order)), xtick_label=area_category_in_order, xtick_rotation=90)
 
     def direction_preference_performance_scatter(self, ax, performance_metric='correlation', mode='uniform', diagonal=False):
         if performance_metric == 'correlation':
@@ -2725,8 +2700,23 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
 
         cf.set_ax(ax, xlabel='Distance (mm)', ylabel='Angle')
 
-    def RMAE_distance(self, ax):
-        pass
+    def distance_relative_error(self, ax, dim='2D'):
+        if dim == '2D':
+            distance_matrix = self.animal_info.distance_2D
+        elif dim == '3D':
+            distance_matrix = self.animal_info.distance_3D
+        
+        relative_error = self.axon_growth_model.get_relative_error()
+        flatten_distance = []
+        flatten_relative_error = []
+        for source in self.animal_info.source_name:
+            for target in self.animal_info.target_name:
+                if source != target and self.SC_data.loc[source, target] > 0:
+                    flatten_distance.append(distance_matrix.loc[source, target])
+                    flatten_relative_error.append(relative_error.loc[source, target])
+        cf.plt_smooth_scatter_line(ax, flatten_distance, flatten_relative_error)
+        cf.set_ax(ax, xlabel=f'Distance {dim} (mm)', ylabel='Relative error')
+
 
 class MultiCaseVisualizer(cf.MultiVisualizerByCol):
     '''
@@ -2744,10 +2734,8 @@ class MultiCaseVisualizer(cf.MultiVisualizerByCol):
 
 class PaperFig:
     def __init__(self, model_timedir_list):
-        # self.animal_list = ['mouse', 'marmoset', 'macaque', 'human']
-        # self.dataset_key_list = ['gamanut', 'majka', 'markov40', 'lariviere']
-        self.animal_list = ['marmoset', 'macaque']
-        self.dataset_key_list = ['majka', 'markov40']
+        self.animal_list = ['mouse', 'marmoset', 'macaque', 'human']
+        self.dataset_key_list = ['gamanut', 'majka', 'markov40', 'lariviere']
         self.animal_num = len(self.animal_list)
         self.model_timedir_list = model_timedir_list
         self.multi_visualizer = MultiCaseVisualizer(self.animal_list, self.dataset_key_list, self.model_timedir_list)
@@ -2942,9 +2930,11 @@ class PaperFig:
 
         ax = ax_dict['a']
         single_visualizer.area_level_performance(ax, performance_metric='correlation', sort=True)
+        cf.set_ax(ax, ylabel='Correlation (FLNe)', ylim=[-0.2, 1.2], xtick_rotation=90)
 
         ax = ax_dict['b']
         single_visualizer.area_level_performance(ax, performance_metric='correlation', sort=True, SC_data=animal_info.SCt_data, SC_model=single_visualizer.axon_growth_model.SC_model_dict['FLNt'])
+        cf.set_ax(ax, ylabel='Correlation (FLNt)', ylim=[-0.2, 1.2], xtick_rotation=90)
 
         ax = ax_dict['c']
         single_visualizer.connection_on_flatmap(ax, data_or_model='data', which_area='A1-2')
@@ -2966,9 +2956,12 @@ class PaperFig:
         get_suitable_figsize_kwargs = {'nrows': 2}
         fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
         rm_longrange_kwargs_list = []
+        category_longrange_SC_kwargs_list = []
         for title, ax in ax_dict.items():
             rm_longrange_kwargs_list.append({'ax': ax[0], 'dim': '2D', 'rm_mode': 'data'})
+            category_longrange_SC_kwargs_list.append({'ax': ax[1]})
         self.multi_visualizer.multi_ax_plot_by_single_visualizer('rm_longrange_correlation_change', rm_longrange_kwargs_list)
+        self.multi_visualizer.multi_ax_plot_by_single_visualizer('category_long_range_SC', category_longrange_SC_kwargs_list)
         self.multi_visualizer.add_tag()
         self.multi_visualizer.add_subfig_title()
         self.multi_visualizer.rm_redundant_xylabel()
@@ -2991,6 +2984,9 @@ class PaperFig:
         visualize_macaque_marmoset_performance_similarity(ax, macaque_performance_dict, marmoset_performance_dict)
 
         ax = ax_dict['b']
+        visualize_scaling_law(ax, self.multi_visualizer.single_visualizer_list, dim='2D')
+
+        ax = ax_dict['c']
         
         cf.add_axes_dict_tag(axes_dict=ax_dict, ref_ax=axes[0])
 
@@ -3077,7 +3073,6 @@ class PaperFig:
         self.multi_visualizer.rm_redundant_xylabel()
         self.multi_visualizer.save_fig(self.figdir+'/SI_fig_5')
 
-
     def SI_fig_6(self):
         '''
         para search, lambda and correlation relation
@@ -3117,7 +3112,6 @@ class PaperFig:
             local_multi_visualizer.rm_redundant_xylabel()
             local_multi_visualizer.save_fig(self.figdir+'/SI_fig_7')
 
-
     def SI_fig_8(self):
         '''
         area level correlation, all animals
@@ -3139,7 +3133,17 @@ class PaperFig:
         '''
         distance & relative error
         '''
-        pass
+        get_ax_kwargs = {'nrows': 1}
+        get_suitable_figsize_kwargs = {'nrows': 1}
+        fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
+        kwargs_list = []
+        for title, ax in ax_dict.items():
+            kwargs_list.append({'ax': ax, 'dim': '2D'})
+        self.multi_visualizer.multi_ax_plot_by_single_visualizer('distance_relative_error', kwargs_list)
+        self.multi_visualizer.add_tag()
+        self.multi_visualizer.add_subfig_title()
+        self.multi_visualizer.rm_redundant_xylabel()
+        self.multi_visualizer.save_fig(self.figdir+'/SI_fig_9')
 
     def SI_fig_10(self):
         '''
