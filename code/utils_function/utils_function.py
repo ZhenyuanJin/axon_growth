@@ -342,7 +342,7 @@ class AnimalInfo(AnimalDir):
         '''
         super().__init__(animal, dataset_key)
         self.force_re_preprocess = False
-        self.force_re_preprocess = True
+        # self.force_re_preprocess = True
         self._re_preprocess_dict = {} # 运行过的计算,标记为True
 
         SC_type_dict = {'mouse_gamanut': 'FLNe', 'marmoset_majka': 'FLNe', 'marmoset_V4': 'FLNe', 'macaque_markov29': 'FLNe', 'macaque_markov40': 'FLNe', 'human_lariviere': 'Dmri'}
@@ -396,6 +396,11 @@ class AnimalInfo(AnimalDir):
 
     @property
     def coords_dict(self):
+        '''
+        注意:
+        
+        key是split的name
+        '''
         try:
             self._raise_for_force_re_preprocess('coords_dict')
             return load_coords_dict(self.animal, self.dataset_key)
@@ -405,6 +410,11 @@ class AnimalInfo(AnimalDir):
     
     @property
     def polygon_dict(self):
+        '''
+        注意:
+        
+        key是split的name
+        '''
         try:
             self._raise_for_force_re_preprocess('polygon_dict')
             return load_polygon_dict(self.animal, self.dataset_key)
@@ -561,6 +571,7 @@ class AnimalInfo(AnimalDir):
                         SC.loc[s, t] = self.intrinsic_proportion[t]
                     else:
                         SC.loc[s, t] = SC.loc[s, t] * (1 - self.intrinsic_proportion[t])
+            return SC
         else:
             raise NotImplementedError
 
@@ -1253,14 +1264,14 @@ def pointpats_random_poisson(hull, intensity=None, size=None, seed=None, rng=Non
     return result.squeeze()
 
 
-def generate_random_point_in_polygon(polygon, density, seed=None):
+def generate_random_point_in_polygon(polygon, density, seed=None, rng=None):
     '''
     在多边形内生成随机点
 
     polygon: shapely.geometry.Polygon, 多边形
     density: int, 点的密度
     '''
-    return pointpats_random_poisson(polygon, size=int(density*polygon.area), seed=seed)
+    return pointpats_random_poisson(polygon, size=int(density*polygon.area), seed=seed, rng=rng)
 
 
 def get_neuron_num(neuron_density, polygon_dict, total_num, animal, dataset_key):
@@ -1278,7 +1289,7 @@ def get_neuron_num(neuron_density, polygon_dict, total_num, animal, dataset_key)
     split_neuron_density = broadcast_value_to_split_area(neuron_density, animal, dataset_key)
     neuron_num = {}
     for area in split_neuron_density.keys():
-        neuron_num[area] = int(split_neuron_density[area]*polygon_dict[area].area)
+        neuron_num[area] = split_neuron_density[area]*polygon_dict[area].area
     # 保证神经元数目的总和等于total_num
     neuron_num_sum = sum(neuron_num.values())
     for area in neuron_num.keys():
@@ -1324,6 +1335,9 @@ def part_generate_axon_source_target(animal, dataset_key, direction_method, leng
     Generate the source and target of the axon growth model.
 
     point_density: dict, 密度,注意key不是split的
+
+    注意:
+    生成的indices_ss和indices_tt是split的name
     '''
     animal_info = AnimalInfo(animal, dataset_key)
     polygon_dict = animal_info.polygon_dict
@@ -1433,7 +1447,7 @@ def part_generate_axon_source_target(animal, dataset_key, direction_method, leng
     return results
 
 
-def generate_SC_from_axon_source_target(animal, dataset_key, outcomes_dir=None, indices_ss=None, indices_tt=None):
+def generate_SC_from_axon_source_target(animal, dataset_key, outcomes_dir=None, timedir=None, indices_ss=None, indices_tt=None):
     '''
     Get the model SC and Data SC.
 
@@ -1446,9 +1460,10 @@ def generate_SC_from_axon_source_target(animal, dataset_key, outcomes_dir=None, 
         FLNt: FLN with self connection
     '''
     if indices_ss is None or indices_tt is None:
-        axon_source_target, axon_source_target_exist = load_axon_source_target(outcomes_dir)
-        indices_ss = axon_source_target['indices_ss']
-        indices_tt = axon_source_target['indices_tt']
+        axon_growth_model = AxonGrowthModel()
+        axon_growth_model.set_timedir(timedir)
+        indices_ss = axon_growth_model.get_value_from_direct_results('indices_ss')
+        indices_tt = axon_growth_model.get_value_from_direct_results('indices_tt')
     
     animal_info = AnimalInfo(animal, dataset_key)
     full_name = animal_info.full_name
@@ -1584,7 +1599,7 @@ class AxonGrowthModel(cf.MetaModel):
         except:
             indices_ss = self.get_value_from_direct_results('indices_ss')
             indices_tt = self.get_value_from_direct_results('indices_tt')
-            return generate_SC_from_axon_source_target(self.animal, self.dataset_key, outcomes_dir=self.outcomes_dir, indices_ss=indices_ss, indices_tt=indices_tt)
+            return generate_SC_from_axon_source_target(self.animal, self.dataset_key, outcomes_dir=self.outcomes_dir, timedir=self.timedir, indices_ss=indices_ss, indices_tt=indices_tt)
 
     def get_suitable_SC_model(self):
         '''
@@ -1666,28 +1681,6 @@ def area_name_to_index_array(area_name_list, ordered_area_name):
     return index_array
 
 
-# def convert_split_df_to_normal(split_df, animal, dataset_key, method='sum'):
-#     '''
-#     将以分裂的脑区作为column和row的df转换为正常的
-#     '''
-#     animal_info = AnimalInfo(animal, dataset_key)
-#     full_name = animal_info.full_name
-#     full_split_name = animal_info.full_split_name
-#     split_name_to_name_dict = animal_info.split_name_to_name_dict
-
-#     df = cf.get_zero_df(index=full_name, columns=full_name)
-#     count_split_df = cf.get_zero_df(index=full_name, columns=full_name)
-#     for row in full_split_name:
-#         for col in full_split_name:
-#             merge_row = split_name_to_name_dict[row]
-#             merge_col = split_name_to_name_dict[col]
-#             df.loc[merge_row, merge_col] += split_df.loc[row, col]
-#             count_split_df.loc[merge_row, merge_col] += 1
-#     if method == 'sum':
-#         pass
-#     elif method == 'mean':
-#         df = df / count_split_df
-#     return df
 def convert_split_df_to_normal(split_df, animal, dataset_key, method='sum'):
     '''
     将以分裂的脑区作为column和row的df转换为正常的
@@ -1721,6 +1714,7 @@ def convert_split_df_to_normal(split_df, animal, dataset_key, method='sum'):
         df.loc[row, col] = value
 
     return df
+
 
 def broadcast_value_to_split_area(value_dict, animal, dataset_key):
     '''
@@ -2025,11 +2019,18 @@ def get_rm_longrange_correlation_change(SC_data, SC_model, distance_matrix, anim
     for threshold in np.linspace(0, max_distance, point_num):
         SC_data_threshold = SC_data.copy()
         SC_model_threshold = SC_model.copy()
+        SC_data_threshold[distance_matrix > threshold] = 0
+        SC_model_threshold[distance_matrix > threshold] = 0
         if rm_mode == 'data' or rm_mode == 'both':
-            SC_data_threshold[distance_matrix > threshold] = 0
+            SC_data_to_use = SC_data_threshold
+        else:
+            SC_data_to_use = SC_data
         if rm_mode == 'model' or rm_mode == 'both':
-            SC_model_threshold[distance_matrix > threshold] = 0
-        corr = data_model_correlation(SC_data_threshold, SC_model_threshold, animal, dataset_key, diagonal=False)
+            SC_model_to_use = SC_model_threshold
+        else:
+            SC_model_to_use = SC_model
+        # 计算相关性
+        corr = data_model_correlation(SC_data_to_use, SC_model_to_use, animal, dataset_key, diagonal=False)
         corr_list.append(corr)
     return corr_list
 
@@ -2501,16 +2502,16 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
     def vector_field(self, ax):
         pass
 
-    def data_model_SC(self, ax_model, ax_data):
-        visualize_connection_matrix_heatmap(ax_data, ax_model, matrix_data=self.SC_data, matrix_model=self.SC_model, animal=self.animal, dataset_key=self.dataset_key, log_matrix=False, topo=False)
+    def data_model_SC(self, ax_model, ax_data, topo=False):
+        visualize_connection_matrix_heatmap(ax_data, ax_model, matrix_data=self.SC_data, matrix_model=self.SC_model, animal=self.animal, dataset_key=self.dataset_key, log_matrix=False, topo=topo)
 
-    def area_level_performance(self, ax, performance_metric='correlation', sort=True, SC_data=None, SC_model=None):
+    def area_level_performance(self, ax, performance_metric='correlation', sort=True, SC_data=None, SC_model=None, diagonal=False):
         if SC_data is None:
             SC_data = self.SC_data
         if SC_model is None:
             SC_model = self.SC_model
         if performance_metric == 'correlation':
-            performance_dict = area_level_correlation(SC_data=SC_data, SC_model=SC_model, animal=self.animal, dataset_key=self.dataset_key, diagonal=False)
+            performance_dict = area_level_correlation(SC_data=SC_data, SC_model=SC_model, animal=self.animal, dataset_key=self.dataset_key, diagonal=diagonal)
         else:
             raise ValueError(f'performance_metric {performance_metric} is not supported')
         if sort:
@@ -2629,7 +2630,10 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         cf.sns_hist(ax, data=SC.values.flatten(), bins=self.bin_num, log_scale=log_scale, **distribution_kwargs)
         cf.set_ax(ax, xlabel='SC', title=data_or_model)
 
-    def retrograde_neuron(self, ax, pos, radius):
+    def retrograde_neuron_by_pos(self, ax, pos, radius):
+        '''
+        显示一个pos内的ss的所有presynaptic neuron
+        '''
         ss = self.axon_growth_model.get_value_from_direct_results('ss')
         tt = self.axon_growth_model.get_value_from_direct_results('tt')
         
@@ -2637,10 +2641,54 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         in_circle_index = np.where(tt_pos_distance < radius)[0]
         ss_corresponding = ss[in_circle_index]
         
-        cf.plt_scatter(ax, ss_corresponding[:, 0], ss_corresponding[:, 1], color=cf.BLACK, label='ss', s=1)
+        cf.plt_scatter(ax, ss_corresponding[:, 0], ss_corresponding[:, 1], color=cf.BLACK, label='source neuron', s=1)
         show_area_boundary(ax, animal=self.animal, dataset_key=self.dataset_key, show_area_name=True, text_fontsize=cf.FONT_SIZE/3, edgecolor=cf.BLACK)
 
-    def rm_longrange_correlation_change(self, ax, rm_mode='data', dim='2D', point_num=100):
+    def retrograde_neuron_by_area(self, ax, area):
+        '''
+        显示一个area的所有presynaptic neuron
+        '''
+        ss = self.axon_growth_model.get_value_from_direct_results('ss')
+        indices_tt = self.axon_growth_model.get_value_from_direct_results('indices_tt')
+
+        # 找到indices_tt中为area的索引
+        tt_indices_in_area_indices = np.where(indices_tt == area)[0]
+        ss_corresponding = ss[tt_indices_in_area_indices]
+
+        cf.plt_scatter(ax, ss_corresponding[:, 0], ss_corresponding[:, 1], color=cf.BLACK, label='source neuron', s=1)
+        cf.plt_polygon(ax, xy=self.animal_info.coords_dict[area], color=cf.GRAY)
+        show_area_boundary(ax, animal=self.animal, dataset_key=self.dataset_key, show_area_name=True, text_fontsize=cf.FONT_SIZE/3, edgecolor=cf.BLACK)
+
+    def anterograde_neuron_by_pos(self, ax, pos, radius):
+        '''
+        显示一个pos内的ss的所有postsynaptic neuron
+        '''
+        ss = self.axon_growth_model.get_value_from_direct_results('ss')
+        tt = self.axon_growth_model.get_value_from_direct_results('tt')
+
+        ss_pos_distance = np.linalg.norm(ss - pos, axis=1)
+        in_circle_index = np.where(ss_pos_distance < radius)[0]
+        tt_corresponding = tt[in_circle_index]
+
+        cf.plt_scatter(ax, tt_corresponding[:, 0], tt_corresponding[:, 1], color=cf.BLACK, label='target neuron', s=1)
+        show_area_boundary(ax, animal=self.animal, dataset_key=self.dataset_key, show_area_name=True, text_fontsize=cf.FONT_SIZE/3, edgecolor=cf.BLACK)
+
+    def anterograde_neuron_by_area(self, ax, area):
+        '''
+        显示一个area的所有postsynaptic neuron
+        '''
+        tt = self.axon_growth_model.get_value_from_direct_results('tt')
+        indices_ss = self.axon_growth_model.get_value_from_direct_results('indices_ss')
+        
+        # 找到indices_ss中为area的索引
+        ss_indices_in_area_indices = np.where(indices_ss == area)[0]
+        tt_corresponding = tt[ss_indices_in_area_indices]
+
+        cf.plt_scatter(ax, tt_corresponding[:, 0], tt_corresponding[:, 1], color=cf.BLACK, label='target neuron', s=1)
+        cf.plt_polygon(ax, xy=self.animal_info.coords_dict[area], color=cf.GRAY)
+        show_area_boundary(ax, animal=self.animal, dataset_key=self.dataset_key, show_area_name=True, text_fontsize=cf.FONT_SIZE/3, edgecolor=cf.BLACK)
+
+    def rm_longrange_correlation_change(self, ax, dim='2D', point_num=100, rm_mode='data'):
         if dim == '2D':
             distance_matrix = self.animal_info.distance_2D
         elif dim == '3D':
@@ -2648,8 +2696,8 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
 
         SC_model = self.SC_model_masked
         SC_data = self.SC_data
-        SC_model_logged = log_SC(SC_model, self.animal, self.dataset_key, apply_c=False, apply_w=False)
-        SC_data_logged = log_SC(SC_data, self.animal, self.dataset_key, apply_c=False, apply_w=False)
+        SC_model_logged = log_SC(SC_model, self.animal, self.dataset_key, apply_c=True, apply_w=True)
+        SC_data_logged = log_SC(SC_data, self.animal, self.dataset_key, apply_c=True, apply_w=True)
 
         corr_list = get_rm_longrange_correlation_change(SC_data, SC_model, distance_matrix, self.animal, self.dataset_key, point_num=point_num, rm_mode=rm_mode)
         corr_list_logged_version = get_rm_longrange_correlation_change(SC_data_logged, SC_model_logged, distance_matrix, self.animal, self.dataset_key, point_num=point_num, rm_mode=rm_mode)
@@ -2731,7 +2779,7 @@ class MultiCaseVisualizer(cf.MultiVisualizerByCol):
         self.single_visualizer_list = [SingleCaseVisualizer(animal, dataset_key, model_timedir) for animal, dataset_key, model_timedir in zip(self.animal_list, self.dataset_key_list, self.model_timedir_list)]
         super().__init__(self.single_visualizer_list, fig_title_list=animal_list)
 
-
+@cf.tracker_with_time
 class PaperFig:
     def __init__(self, model_timedir_list):
         self.animal_list = ['mouse', 'marmoset', 'macaque', 'human']
@@ -2740,6 +2788,7 @@ class PaperFig:
         self.model_timedir_list = model_timedir_list
         self.multi_visualizer = MultiCaseVisualizer(self.animal_list, self.dataset_key_list, self.model_timedir_list)
         self.figdir = '../../results/figs'
+        self._check_figdir = cf.pj(self.figdir, 'check_fig')
         self.formats = [cf.SAVEFIG_RASTER_FORMAT, cf.SAVEFIG_FORMAT]
         self.bbox_inches = 'tight'
         self.save_fig_kwargs = {'formats': self.formats, 'bbox_inches': self.bbox_inches}
@@ -2933,7 +2982,7 @@ class PaperFig:
         cf.set_ax(ax, ylabel='Correlation (FLNe)', ylim=[-0.2, 1.2], xtick_rotation=90)
 
         ax = ax_dict['b']
-        single_visualizer.area_level_performance(ax, performance_metric='correlation', sort=True, SC_data=animal_info.SCt_data, SC_model=single_visualizer.axon_growth_model.SC_model_dict['FLNt'])
+        single_visualizer.area_level_performance(ax, performance_metric='correlation', sort=True, SC_data=animal_info.SCt_data, SC_model=single_visualizer.axon_growth_model.SC_model_dict['FLNt'], diagonal=True)
         cf.set_ax(ax, ylabel='Correlation (FLNt)', ylim=[-0.2, 1.2], xtick_rotation=90)
 
         ax = ax_dict['c']
@@ -2958,7 +3007,7 @@ class PaperFig:
         rm_longrange_kwargs_list = []
         category_longrange_SC_kwargs_list = []
         for title, ax in ax_dict.items():
-            rm_longrange_kwargs_list.append({'ax': ax[0], 'dim': '2D', 'rm_mode': 'data'})
+            rm_longrange_kwargs_list.append({'ax': ax[0], 'dim': '2D'})
             category_longrange_SC_kwargs_list.append({'ax': ax[1]})
         self.multi_visualizer.multi_ax_plot_by_single_visualizer('rm_longrange_correlation_change', rm_longrange_kwargs_list)
         self.multi_visualizer.multi_ax_plot_by_single_visualizer('category_long_range_SC', category_longrange_SC_kwargs_list)
@@ -3177,4 +3226,33 @@ class PaperFig:
             for k in ['weak', 'weak_medium', 'medium_strong', 'strong']:
                 SC_proportion_in_existing_dict[cf.cat(animal, dataset_key)][k] = SC_proportion_dict[cf.cat(animal, dataset_key)][k] / SC_proportion_dict[cf.cat(animal, dataset_key)]['all']
         cf.save_dict(SC_proportion_in_existing_dict, self.figdir+'/table_1')
+
+    def _check_topo_SC(self):
+        get_ax_kwargs = {'nrows': 2}
+        get_suitable_figsize_kwargs = {'nrows': 2}
+        fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
+        kwargs_list = []
+        for title, ax in ax_dict.items():
+            kwargs_list.append({'ax_data': ax[0], 'ax_model': ax[1], 'topo': True})
+        self.multi_visualizer.multi_ax_plot_by_single_visualizer('data_model_SC', kwargs_list)
+        self.multi_visualizer.add_tag()
+        self.multi_visualizer.add_subfig_title(y=1.0)
+        self.multi_visualizer.rm_redundant_xylabel()
+        self.multi_visualizer.save_fig(self._check_figdir+'/check_topo_SC')
+
+    def _check_retrograde_neuron_by_area(self):
+        for single_visualizer in self.multi_visualizer.single_visualizer_list:
+            for area in single_visualizer.animal_info.full_name:
+                fig, ax = cf.get_fig_ax()
+                single_visualizer.retrograde_neuron_by_area(ax, area)
+                cf.set_ax(ax, title=area)
+                cf.save_fig(fig, cf.pj(self._check_figdir, single_visualizer.title, cf.cat(area, 'retrograde')), **self.save_fig_kwargs)
+    
+    def _check_anterograde_neuron_by_area(self):
+        for single_visualizer in self.multi_visualizer.single_visualizer_list:
+            for area in single_visualizer.animal_info.full_name:
+                fig, ax = cf.get_fig_ax()
+                single_visualizer.anterograde_neuron_by_area(ax, area)
+                cf.set_ax(ax, title=area)
+                cf.save_fig(fig, cf.pj(self._check_figdir, single_visualizer.title, cf.cat(area, 'anterograde')), **self.save_fig_kwargs)
 # endregion
