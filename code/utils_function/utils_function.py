@@ -1462,8 +1462,8 @@ def generate_SC_from_axon_source_target(animal, dataset_key, outcomes_dir=None, 
     if indices_ss is None or indices_tt is None:
         axon_growth_model = AxonGrowthModel()
         axon_growth_model.set_timedir(timedir)
-        indices_ss = axon_growth_model.get_value_from_direct_results('indices_ss')
-        indices_tt = axon_growth_model.get_value_from_direct_results('indices_tt')
+        indices_ss = axon_growth_model.get_value_from_simulation_results('indices_ss')
+        indices_tt = axon_growth_model.get_value_from_simulation_results('indices_tt')
     
     animal_info = AnimalInfo(animal, dataset_key)
     full_name = animal_info.full_name
@@ -1574,20 +1574,17 @@ class AxonGrowthModel(cf.MetaModel):
         else:
             return Lambda
 
-    def set_direct_results_key(self):
-        self.direct_results_key = ['ss', 'tt', 'indices_ss', 'indices_tt']
-
     def run_detail(self):
         generation_kwargs = {'animal': self.animal, 'dataset_key': self.dataset_key, 'direction_method': self.direction_method, 'length_method': self.length_method, 'direction_params': self.direction_params, 'length_params': self.length_params, 'na': int(self.na/self.process_num), 'point_density': self.point_density, 'model_type': self.model_type, 'use_part_index_as_seed': self.use_part_index_as_seed, 'max_iteration': self.max_iteration}
         generate_for_list = list(range(self.process_num))
         axon_list = cf.multi_process_list_for(process_num=self.process_num, func=part_generate_axon_source_target, kwargs=generation_kwargs, for_list=generate_for_list, for_idx_name='part_index')
         # 合并结果
-        self.direct_results = defaultdict(list)
+        self.simulation_results = defaultdict(list)
         for r in axon_list:
             for k, v in r.items():
-                self.direct_results[k].extend(v)
+                self.simulation_results[k].extend(v)
         # 将所有结果变成array
-        self.direct_results = {k: np.array(v) for k, v in self.direct_results.items()}
+        self.simulation_results = {k: np.array(v) for k, v in self.simulation_results.items()}
 
     @property
     def SC_model_dict(self):
@@ -1597,8 +1594,8 @@ class AxonGrowthModel(cf.MetaModel):
         try:
             return load_SC_model_dict(self.outcomes_dir)
         except:
-            indices_ss = self.get_value_from_direct_results('indices_ss')
-            indices_tt = self.get_value_from_direct_results('indices_tt')
+            indices_ss = self.get_value_from_simulation_results('indices_ss')
+            indices_tt = self.get_value_from_simulation_results('indices_tt')
             return generate_SC_from_axon_source_target(self.animal, self.dataset_key, outcomes_dir=self.outcomes_dir, timedir=self.timedir, indices_ss=indices_ss, indices_tt=indices_tt)
 
     def get_suitable_SC_model(self):
@@ -2634,8 +2631,8 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         '''
         显示一个pos内的ss的所有presynaptic neuron
         '''
-        ss = self.axon_growth_model.get_value_from_direct_results('ss')
-        tt = self.axon_growth_model.get_value_from_direct_results('tt')
+        ss = self.axon_growth_model.get_value_from_simulation_results('ss')
+        tt = self.axon_growth_model.get_value_from_simulation_results('tt')
         
         tt_pos_distance = np.linalg.norm(tt - pos, axis=1)
         in_circle_index = np.where(tt_pos_distance < radius)[0]
@@ -2648,8 +2645,8 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         '''
         显示一个area的所有presynaptic neuron
         '''
-        ss = self.axon_growth_model.get_value_from_direct_results('ss')
-        indices_tt = self.axon_growth_model.get_value_from_direct_results('indices_tt')
+        ss = self.axon_growth_model.get_value_from_simulation_results('ss')
+        indices_tt = self.axon_growth_model.get_value_from_simulation_results('indices_tt')
 
         # 找到indices_tt中为area的索引
         tt_indices_in_area_indices = np.where(indices_tt == area)[0]
@@ -2663,8 +2660,8 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         '''
         显示一个pos内的ss的所有postsynaptic neuron
         '''
-        ss = self.axon_growth_model.get_value_from_direct_results('ss')
-        tt = self.axon_growth_model.get_value_from_direct_results('tt')
+        ss = self.axon_growth_model.get_value_from_simulation_results('ss')
+        tt = self.axon_growth_model.get_value_from_simulation_results('tt')
 
         ss_pos_distance = np.linalg.norm(ss - pos, axis=1)
         in_circle_index = np.where(ss_pos_distance < radius)[0]
@@ -2677,8 +2674,8 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         '''
         显示一个area的所有postsynaptic neuron
         '''
-        tt = self.axon_growth_model.get_value_from_direct_results('tt')
-        indices_ss = self.axon_growth_model.get_value_from_direct_results('indices_ss')
+        tt = self.axon_growth_model.get_value_from_simulation_results('tt')
+        indices_ss = self.axon_growth_model.get_value_from_simulation_results('indices_ss')
         
         # 找到indices_ss中为area的索引
         ss_indices_in_area_indices = np.where(indices_ss == area)[0]
