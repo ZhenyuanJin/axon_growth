@@ -74,7 +74,8 @@ from pdf2image import convert_from_path
 import imageio
 import shapely.geometry
 import pointpats
-
+import nibabel as nib
+import SimpleITK as sitk
 
 # 自定义库
 # sys.path.append(r'/data/zyjin/common_func/')
@@ -169,6 +170,83 @@ def generate_area_center(animal, dataset_key, density=100):
     return area_center_dict
 
 
+def generate_area_center_3D(animal, dataset_key):
+    animal_info = AnimalInfo(animal, dataset_key)
+    full_name = animal_info.full_name
+    area_center_dict = {}
+    if animal=='mouse' and dataset_key=='gamanut':
+        atlas = np.load(animal_info.raw_3D_data_dir+'/modified_data.npy')
+        areas = pd.read_excel(animal_info.raw_3D_data_dir+'/areas.xlsx')
+        modified_area_to_index = {}
+        for idx in areas.index:
+            modified_area_to_index[areas.loc[idx, 'area_name']] = idx + 1
+        for brain_area in full_name:
+            # 把脑区对应到数字
+            s = modified_area_to_index[brain_area]
+            voxels = np.array(np.where(atlas==s))
+            area_center_dict[brain_area] = np.mean(voxels, axis=1)
+    if animal=='marmoset' and dataset_key=='majka':
+        def indices_to_mm(repeated_indices, affine):
+            return np.array([repeated_indices[:, 0]*(-affine[0, 0])-affine[0, 3], repeated_indices[:, 1]*(-affine[1, 1])-affine[1, 3], repeated_indices[:, 2]*affine[2, 2]+affine[2, 3]]).T
+        atlas = nib.load(animal_info.raw_3D_data_dir+'/atlas_segmentation_200um.nii.gz')
+        area_name = pd.read_excel(animal_info.raw_3D_data_dir+'/atlas_labels.xlsx')
+        atlas_label = atlas.get_fdata()
+        affine = atlas.affine
+        for label in np.unique(atlas_label):
+            if int(label)!=0:
+                voxel = np.array(np.where(atlas_label==label)).T
+                area_center_dict[area_name.loc[(int(label))-1, 'Area']] = indices_to_mm(np.array([np.mean(voxel, axis=0)]), affine).flatten()
+        area_center_dict.pop('no', None)
+    if animal=='macaque' and dataset_key in ['markov29', 'markov40']:
+        def macaque_voxel_value_to_area_name(voxel_value):
+            label_mapping = {0: 'Clear Label', 1: '10', 2: '46d', 3: '46v', 4: '11', 5: '12', 6: '14', 7: '9', 8: '32', 9: '946d', 10: '946v', 11: '24c', 12: '8B', 13: '45A', 14: '13', 15: '25', 16: 'TEMPORAL_POLE', 17: '45B', 18: 'F6', 19: 'F7', 20: '8r', 21: 'ProM', 22: '44', 23: 'F5', 24: '24b', 25: 'OPAI', 26: 'OPRO', 27: 'Gu', 28: '8l', 29: '8m', 30: '24a', 31: 'PERIRHINAL', 32: 'PIRIFORM', 33: 'ENTORHINAL', 34: 'STPr', 35: 'TEama', 36: 'TEav', 37: 'INSULA', 38: 'Pi', 39: 'PBr', 40: 'IPa', 41: 'SII', 42: 'PGa', 43: 'CORE', 44: 'LB', 45: 'MB', 46: '24d', 47: 'TEad', 48: 'F2', 49: 'F3', 50: 'F4', 51: '3', 52: '2', 53: 'F1', 54: 'SUBICULUM', 55: 'TEamp', 56: 'STPi', 57: 'Tepd', 58: 'TEpv', 59: '1', 60: 'THTF', 61: '2930', 62: '23', 63: 'PBc', 64: 'AIP', 65: '7B', 66: 'FST', 67: '5', 68: '7op', 69: 'TEOm', 70: 'TEO', 71: 'STPc', 72: 'VIP', 73: 'V2', 74: 'LIP', 75: 'MST', 76: 'V4', 77: 'V3', 78: 'Pro.St.', 79: '31', 80: '7A', 81: '7m', 82: 'TPt', 83: 'MT', 84: 'V4t', 85: 'MIP', 86: 'V1', 87: 'PIP', 88: 'V3A', 89: 'V6A', 90: 'DP', 91: 'V6'}
+            return label_mapping.get(voxel_value, "Unknown Brain Region")
+        mha_file_path = animal_info.raw_3D_data_dir+'/91 areas parcellation fitted on M132 MRI/Coronal Parcellation.mha'
+        mha_image = sitk.ReadImage(mha_file_path)
+        mha_array = sitk.GetArrayFromImage(mha_image)
+        for i in range(1, len(full_name)+1):
+            # 从1开始因为0对应的是没有脑子的地方
+            brain_area = macaque_voxel_value_to_area_name(i)
+            voxels = np.array(np.where(mha_array==i))
+            area_center_dict[brain_area] = np.mean(voxels, axis=1)
+    if animal == 'human' and dataset_key == 'lariviere':
+        def number_to_area_name(index, brain_type):
+            # 不区分左右脑区,所以把'R_', 'L_'直接去掉
+            atlas = pd.read_csv(animal_info.raw_3D_data_dir+'/Atlas.csv')
+            if brain_type=='R':
+                if index!=0:
+                    return atlas.iloc[index-1]['ROI Name'][2:]
+                else:
+                    print('index=0 is not allowed')
+                    return 'unknown'
+            if brain_type=='L':
+                if index!=0:
+                    return atlas.iloc[index-1+180]['ROI Name'][2:]
+                else:
+                    print('index=0 is not allowed')
+                    return 'unknown'
+        area_name = pd.read_csv(animal_info.raw_3D_data_dir+'/Atlas.csv')
+        img = nib.load(animal_info.raw_3D_data_dir+'/Q1-Q6_RelatedParcellation210.L.midthickness_MSMAll_2_d41_WRN_DeDrift.32k_fs_LR.surf.gii')
+        coord_L = img.darrays[0].data
+
+        img = nib.load(animal_info.raw_3D_data_dir+'/cortex_ColeAnticevic_NetPartition_GlasserParcels_L.label.gii')
+        labels = img.darrays[0].data
+
+        unique_labels = np.unique(labels)  # 获取所有唯一的标签值
+
+        for label in unique_labels:
+            # 找到属于当前标签的点的索引
+            mask = (labels == label)
+            points_with_label = coord_L[mask]
+
+            # 计算重心坐标
+            centroid = np.mean(points_with_label, axis=0)
+            area_center_dict[number_to_area_name(label, 'L')] = centroid
+        area_center_dict.pop('unknown', None) # 去掉unknown
+    cf.save_dict(area_center_dict, animal_info.threeD_data_dir + 'area_center_dict_3D')
+    return area_center_dict
+
+
 def generate_name_location(animal, dataset_key):
     '''
     生成脑区名字和位置的对应关系(此位置保证name在polygon内部,且较美观)
@@ -176,14 +254,14 @@ def generate_name_location(animal, dataset_key):
     animal_info = AnimalInfo(animal, dataset_key)
     
     area_center_dict = generate_area_center(animal, dataset_key)
-    name_location_dict = area_center_dict.copy() # 先凑合着用
+    name_location_dict = area_center_dict.copy()
     cf.save_dict(name_location_dict, animal_info.area_coords_dir + 'name_location_dict')
     return name_location_dict
 
 
 def generate_angle_matrix(animal, dataset_key, dim='2D'):
     '''
-    生成
+    生成角度矩阵,2D返回的是df,3D返回的是dict,其中'azim'和'elev'是两个df
     '''
     animal_info = AnimalInfo(animal, dataset_key)
     if dim == '2D':
@@ -196,7 +274,15 @@ def generate_angle_matrix(animal, dataset_key, dim='2D'):
         angle_matrix = convert_split_df_to_normal(split_angle_matrix, animal, dataset_key, method='mean')
         cf.save_pkl(angle_matrix, animal_info.angle_matrix_dir + 'angle_matrix_2D')
     else:
-        raise NotImplementedError
+        area_center_dict_3D = animal_info.area_center_dict_3D
+        full_name = animal_info.full_name
+        azim_matrix = pd.DataFrame(np.zeros([len(full_name), len(full_name)]), index=full_name, columns=full_name)
+        elev_matrix = pd.DataFrame(np.zeros([len(full_name), len(full_name)]), index=full_name, columns=full_name)
+        for i, center_i in area_center_dict_3D.items():
+            for j, center_j in area_center_dict_3D.items():
+                azim_matrix.loc[i, j], elev_matrix.loc[i, j] = cf.get_angle_3d(center_i, center_j)
+        angle_matrix = {'azim': azim_matrix, 'elev': elev_matrix}
+        cf.save_pkl(angle_matrix, animal_info.angle_matrix_dir + 'angle_matrix_3D')
     return angle_matrix
 
 
@@ -215,7 +301,13 @@ def generate_distance_matrix(animal, dataset_key, dim='2D'):
         distance_matrix = convert_split_df_to_normal(split_distance_matrix, animal, dataset_key, method='min')
         cf.save_pkl(distance_matrix, animal_info.distance_matrix_dir + 'distance_matrix_2D')
     else:
-        raise NotImplementedError
+        area_center_dict_3D = animal_info.area_center_dict_3D
+        full_name = animal_info.full_name
+        distance_matrix = pd.DataFrame(np.zeros([len(full_name), len(full_name)]), index=full_name, columns=full_name)
+        for i, center_i in area_center_dict_3D.items():
+            for j, center_j in area_center_dict_3D.items():
+                distance_matrix.loc[i, j] = np.linalg.norm(center_i - center_j, ord=2)
+        cf.save_pkl(distance_matrix, animal_info.distance_matrix_dir + 'distance_matrix_3D')
     return distance_matrix
 
 
@@ -307,6 +399,27 @@ def generate_injection_id_to_area_map(animal, dataset_key):
         return injection_id_to_area_map
     else:
         raise NotImplementedError
+
+
+def generate_injection_site(animal, dataset_key, dim='2D'):
+    animal_info = AnimalInfo(animal, dataset_key)
+    
+    injection_site = defaultdict(list)
+    if animal_info.animal_and_dataset_key == 'marmoset_majka':
+        if dim == '2D':
+            df = cf.load_df(animal_info.raw_data_dir + '/flatmap_injection_location')
+            for idx, row in df.iterrows():
+                area = animal_info.injection_id_to_area_map[row['injection_id']]
+                injection_site[area].append(np.array([row['flatmap_x'], row['flatmap_y']]))
+        elif dim == '3D':
+            SI_table_3 = cf.load_df(animal_info.raw_data_dir + '/SI_table_3')
+            for index, row in SI_table_3.iterrows():
+                area = row['Area']
+                injection_site[area].append(np.array([row['Mediolateral'], row['Rostrocaudal'], row['Dorsoventral']]))
+        cf.save_dict(injection_site, animal_info.injection_site_dir + f'injection_site_{dim}')
+        return injection_site
+    else:
+        return NotImplementedError
 # endregion
 
 
@@ -319,12 +432,13 @@ class AnimalDir:
 
         # 原始数据目录
         self.raw_data_dir = '../../raw_data/' + self.animal_and_dataset_key + '/'
-        self.data_dir = '../../data/' + self.animal_and_dataset_key + '/'
         self.raw_area_coords_dir = self.raw_data_dir + 'area_coords/'
         self.raw_whole_cortex_coords_dir = self.raw_data_dir + 'whole_cortex_coords/'
         self.raw_area_category_dir = self.raw_data_dir + 'area_category/'
+        self.raw_3D_data_dir = self.raw_data_dir + 'threeD_data/'
 
         # 处理后的数据目录
+        self.data_dir = '../../data/' + self.animal_and_dataset_key + '/'
         self.area_coords_dir = self.data_dir + 'area_coords/'
         self.whole_cortex_coords_dir = self.data_dir + 'whole_cortex_coords/'
         self.area_category_dir = self.data_dir + 'area_category/'
@@ -333,6 +447,8 @@ class AnimalDir:
         self.SC_dir = self.data_dir + 'SC/'
         self.intrinsic_proportion_dir = self.data_dir + 'intrinsic_proportion/'
         self.injection_to_area_map_dir = self.data_dir + 'injection_to_area_map/'
+        self.injection_site_dir = self.data_dir + 'injection_site/'
+        self.threeD_data_dir = self.data_dir + 'threeD_data/'
 
 
 class AnimalInfo(AnimalDir):
@@ -450,6 +566,15 @@ class AnimalInfo(AnimalDir):
             return generate_area_center(self.animal, self.dataset_key)
 
     @property
+    def area_center_dict_3D(self):
+        try:
+            self._raise_for_force_re_preprocess('area_center_dict_3D')
+            return load_area_center_dict_3D(self.animal, self.dataset_key)
+        except:
+            self._update_re_preprocess_dict('area_center_dict_3D')
+            return generate_area_center_3D(self.animal, self.dataset_key)
+
+    @property
     def name_location_dict(self):
         try:
             self._raise_for_force_re_preprocess('name_location_dict')
@@ -469,11 +594,12 @@ class AnimalInfo(AnimalDir):
 
     @property
     def angle_3D(self):
-        raise NotImplementedError
-        azim_matrix = 0
-        elev_matrix = 0
-        angle_3D_dict = {'azim_matrix': azim_matrix, 'elev_matrix': elev_matrix}
-        return angle_3D_dict
+        try:
+            self._raise_for_force_re_preprocess('angle_3D')
+            return load_angle_matrix(self.animal, self.dataset_key, dim='3D')
+        except:
+            self._update_re_preprocess_dict('angle_3D')
+            return generate_angle_matrix(self.animal, self.dataset_key, dim='3D')
 
     @property
     def distance_2D(self):
@@ -598,20 +724,24 @@ class AnimalInfo(AnimalDir):
         '''
         读取injection_site数据
         '''
-        if self.animal_and_dataset_key == 'marmoset_majka':
+        try:
+            self._raise_for_force_re_preprocess('injection_site_2D')
             return load_injection_site(self.animal, self.dataset_key, dim='2D')
-        else:
-            raise NotImplementedError
+        except:
+            self._update_re_preprocess_dict('injection_site_2D')
+            return generate_injection_site(self.animal, self.dataset_key, dim='2D')
     
     @property
     def injection_site_3D(self):
         '''
         读取injection_site数据
         '''
-        if self.animal_and_dataset_key == 'marmoset_majka':
+        try:
+            self._raise_for_force_re_preprocess('injection_site_3D')
             return load_injection_site(self.animal, self.dataset_key, dim='3D')
-        else:
-            raise NotImplementedError
+        except:
+            self._update_re_preprocess_dict('injection_site_3D')
+            return generate_injection_site(self.animal, self.dataset_key, dim='3D')
 
 
 def load_coords_dict(animal, dataset_key):
@@ -654,6 +784,14 @@ def load_area_center_dict(animal, dataset_key):
     return cf.load_pkl(animal_dir.area_coords_dir + 'area_center_dict')
 
 
+def load_area_center_dict_3D(animal, dataset_key):
+    '''
+    读取area_center_3D数据
+    '''
+    animal_dir = AnimalDir(animal, dataset_key)
+    return cf.load_pkl(animal_dir.threeD_data_dir + 'area_center_dict_3D')
+
+
 def load_name_location_dict(animal, dataset_key):
     '''
     读取name_location数据
@@ -686,6 +824,8 @@ def load_angle_matrix(animal, dataset_key, dim='2D'):
     animal_dir = AnimalDir(animal, dataset_key)
     if dim == '2D':
         return cf.load_pkl(animal_dir.angle_matrix_dir + 'angle_matrix')
+    elif dim == '3D':
+        return cf.load_pkl(animal_dir.angle_matrix_dir + 'angle_matrix_3D')
 
 
 def load_distance_matrix(animal, dataset_key, dim='2D'):
@@ -1129,7 +1269,8 @@ def load_area_category_dict(animal, dataset_key):
 
 
 def get_area_category_in_order():
-    return ['Occipital', 'Temporal', 'Parietal', 'Limbic', 'Insular', 'Frontal', 'Prefrontal']
+    # return ['Occipital', 'Temporal', 'Parietal', 'Limbic', 'Insular', 'Frontal', 'Prefrontal']
+    return ['Frontal', 'Insular', 'Limbic', 'Occipital', 'Parietal', 'Prefrontal', 'Temporal']
 
 
 def load_injection_id_to_area_map(animal, dataset_key):
@@ -1140,7 +1281,10 @@ def load_injection_id_to_area_map(animal, dataset_key):
     dataset_key: str, 数据集的名称
     '''
     animal_dir = AnimalDir(animal, dataset_key)
-    return cf.load_pkl(animal_dir.injection_id_to_area_map_dir + '/injection_id_to_area_map')
+    if animal_dir.animal_and_dataset_key == 'marmoset_majka':
+        return cf.load_pkl(animal_dir.injection_id_to_area_map_dir + '/injection_id_to_area_map')
+    else:
+        raise ValueError('Only marmoset_majka has injection id to area map data.')
 
 
 def load_injection_site(animal, dataset_key, dim='2D'):
@@ -1150,23 +1294,18 @@ def load_injection_site(animal, dataset_key, dim='2D'):
     animal: str, 动物名称
     dataset_key: str, 数据集的名称
     dim: 数据维度('2D', '3D')
+
+    注意:
+    一个area可能有多个注射点
     '''
-    animal_info = AnimalInfo(animal, dataset_key)
-    
-    injection_site = defaultdict(list)
-    if animal_info.animal_and_dataset_key == 'marmoset_majka':
+    animal_dir = AnimalDir(animal, dataset_key)
+    if animal_dir.animal_and_dataset_key == 'marmoset_majka':
         if dim == '2D':
-            df = cf.load_df(animal_info.raw_data_dir + '/flatmap_injection_location')
-            for idx, row in df.iterrows():
-                area = animal_info.injection_id_to_area_map[row['injection_id']]
-                injection_site[area].append(np.array([row['flatmap_x'], row['flatmap_y']]))
-        elif dim == '3D':
-            SI_table_3 = cf.load_df(animal_info.raw_data_dir + '/SI_table_3')
-            pass
-        injection_site = {k: np.mean(v, axis=0) for k, v in injection_site.items()}
-        return injection_site
+            return cf.load_pkl(animal_dir.injection_site_dir + '/injection_site_2D')
+        if dim == '3D':
+            return cf.load_pkl(animal_dir.injection_site_dir + '/injection_site_3D')
     else:
-        return NotImplementedError
+        raise ValueError('Only marmoset_majka has injection site data.')
 
 
 def get_molnar_performance(animal, dataset_key):
@@ -2135,49 +2274,55 @@ def get_injection_deviation_rate(animal, dataset_key, mode='2D'):
     获取skewness
     '''
     animal_info = AnimalInfo(animal, dataset_key)
+    injection_deviation_rate_dict = {}
+    target_name = animal_info.target_name
     if animal_info.animal_and_dataset_key == 'marmoset_majka':
-        if mode == '3D':
-            SI_table_3 = pd.read_excel('../../data/marmoset/SI_table_3.xlsx')
-            atlas = nib.load('../../data/marmoset/all_injections/atlas_segmentation_200um.nii.gz')
-            area_name = pd.read_excel('../../data/marmoset/all_injections/atlas_labels.xlsx')
-            atlas_label = atlas.get_fdata()
-            affine = atlas.affine
-
-            # test_location_match_paper(SI_table_3, affine, atlas_label, area_name)
-            center = get_centers_3D(atlas_label, area_name, affine)
-            voxel_num = get_voxel_num(atlas_label, area_name)
-            distance = injection_center_distance(SI_table_3, center)
-            radius = get_radius(atlas_label, area_name, affine)
-            skewness = []
-            for target in target_name:
-                skewness.append(distance[target]/radius[target])
+        def get_radius(dim):
+            radius = defaultdict(float)
+            if dim == '2D':
+                for area in target_name:
+                    for spilit_area in animal_info.name_to_split_name_dict[area]:
+                        radius[area] += max_distance_in_polygon(animal_info.coords_dict[spilit_area])/2
+            else:
+                atlas = nib.load(animal_info.raw_3D_data_dir+'/atlas_segmentation_200um.nii.gz')
+                area_name = pd.read_excel(animal_info.raw_3D_data_dir+'/atlas_labels.xlsx')
+                atlas_label = atlas.get_fdata()
+                affine = atlas.affine
+                for label in np.unique(atlas_label):
+                    if int(label)!=0:
+                        voxel = np.array(np.where(atlas_label==label)).T
+                        distances = pdist(indices_to_mm(voxel, affine))
+                        radius[area_name.loc[(int(label))-1, 'Area']] = np.max(distances)/2
+            return radius
+        def indices_to_mm(repeated_indices, affine):
+            return np.array([repeated_indices[:, 0]*(-affine[0, 0])-affine[0, 3], repeated_indices[:, 1]*(-affine[1, 1])-affine[1, 3], repeated_indices[:, 2]*affine[2, 2]+affine[2, 3]]).T
         if mode == '2D':
             area_center_dict = animal_info.area_center_dict
-            flatmap_injection_location = pd.read_excel('../../data/'+animal+'/flatmap_injection_location.xlsx', index_col=0)
-            SI_table_3 = pd.read_excel('../../data/marmoset/SI_table_3.xlsx')
-            distance = {}
-            radius = {}
-            for row in range(len(SI_table_3.index)):
-                # 有一些SI_table_3中的case带一个X,R,L,要去掉再匹配
-                injection_id = re.sub('[XRL]', '', SI_table_3.iloc[row]['Case']) + '-' + SI_table_3.iloc[row]['Tracer']
-                if injection_id in flatmap_injection_location.loc[:, 'injection_id'].values:
-                    area = SI_table_3.iloc[row]['Area']
-                    distance[area] = []
-                    radius[area] = 0
-                    for spilit_area in name2namelist_dict[area]:
-                        distance[area].append(np.linalg.norm(area_center_dict[spilit_area] - flatmap_injection_location[flatmap_injection_location['injection_id']==injection_id][['flatmap_x', 'flatmap_y']].values.flatten()))
-                        radius[area] += max_distance_in_polygon(area_coords[spilit_area])/2
-                    distance[area] = np.min(distance[area])
-                else:
-                    print(injection_id)
-            skewness = []
-            for target in target_name:
-                if target in distance.keys():
-                    skewness.append(distance[target]/radius[target])
-                else:
-                    skewness.append(np.nan)
-                    print(target)
-        return skewness
+            injection_site = animal_info.injection_site_2D
+            radius = get_radius(mode)
+            for area in target_name:
+                distance = []
+                for inj in injection_site[area]:
+                    # 对于分裂的区域,取最近的距离
+                    split_distance = []
+                    for spilit_area in animal_info.name_to_split_name_dict[area]:
+                        split_distance.append(np.linalg.norm(area_center_dict[spilit_area]-inj))
+                    distance.append(np.min(split_distance))
+                distance = np.mean(distance)
+                injection_deviation_rate_dict[area] = distance/radius[area]
+        if mode == '3D':
+            area_center_dict = animal_info.area_center_dict_3D
+            injection_site = animal_info.injection_site_3D
+            radius = get_radius(mode)
+            print(radius)
+            for area in target_name:
+                distance = []
+                for inj in injection_site[area]:
+                    distance.append(np.linalg.norm(area_center_dict[area]-inj))
+                distance = np.mean(distance)
+                print(area, distance, radius[area])
+                injection_deviation_rate_dict[area] = distance/radius[area]
+        return injection_deviation_rate_dict
     else:
         raise NotImplementedError
 
@@ -2396,7 +2541,7 @@ def visualize_distribution_repeated_by_SC(ax, some_property, SC, minimal_tol=Non
         return plt_hist_instance
 
 
-def visualize_data_model_distribution_scaled_by_SC(ax, some_property, SC_data, SC_model, minimal_tol=None, distribution_type='CDF', distribution_kwargs=None):
+def visualize_data_model_distribution_repeated_by_SC(ax, some_property, SC_data, SC_model, minimal_tol=None, distribution_type='CDF', distribution_kwargs=None):
     '''
     可视化模型和数据的分布
     '''
@@ -2445,8 +2590,44 @@ def visualize_scaling_law(ax, single_visualizer_list, dim='2D'):
         Lambda = optimal_params[animal_and_dataset_key]['Lambda']
         Lambda_list.append(Lambda)
     
-    cf.plt_linregress(ax, x=max_distance_list, y=Lambda_list, xlog=True, ylog=True, show_list=['slope'], scatter_kwargs={'marker': 'o'})
+    cf.plt_linregress(ax, x=max_distance_list, y=Lambda_list, xlog=True, ylog=True, show_list=['slope'], scatter_kwargs={'marker': '*', 's': 1000.})
+    for i in range(len(single_visualizer_list)):
+        animal = single_visualizer_list[i].animal
+        x = max_distance_list[i]
+        y = Lambda_list[i]
+        cf.add_text(ax, x=x*1.2, y=y, text=animal, va='top', ha='left', transform='data')
     cf.set_ax(ax, xlabel='Max distance (mm)', ylabel='Optimal $\Lambda$ (mm)', xlog=True, ylog=True)
+
+
+def get_longrange_proportion_correlation(single_visualizer_list, dim='2D'):
+    animal_list = [single_visualizer.animal for single_visualizer in single_visualizer_list]
+    corr_pd = pd.DataFrame(columns=animal_list, index=animal_list, dtype=float)
+    area_category_in_order = get_area_category_in_order()
+    precomputed_arrays = []
+    
+    for sv in single_visualizer_list:
+        longrange_data = sv.get_category_longrange_SC(dim=dim)['longrange_connection_sum']
+        # 按固定顺序提取区域值
+        longrange_array = np.array([longrange_data[cat] for cat in area_category_in_order])
+        precomputed_arrays.append(longrange_array)
+    
+    n = len(animal_list)
+    
+    # 使用预先计算的列表进行相关性计算
+    for i in range(n):
+        sum_i = precomputed_arrays[i]
+        for j in range(n):
+            sum_j = precomputed_arrays[j]
+            corr = st.spearmanr(sum_i, sum_j).correlation
+            corr_pd.loc[animal_list[i], animal_list[j]] = corr
+    
+    return corr_pd
+
+
+def visualize_longrange_proportion_correlation_heatmap(ax, single_visualizer_list, dim='2D'):
+    corr_pd = get_longrange_proportion_correlation(single_visualizer_list, dim=dim)
+    cmap = cf.get_cmap([cf.WHITE, cf.RED])
+    cf.sns_heatmap(ax, corr_pd, cmap=cmap, vmin=0, vmax=1, cbar_label='Correlation', show_xtick=True, show_ytick=True, heatmap_kwargs={'annot': True, 'fmt': '.2f'})
 
 
 class SingleCaseVisualizer(cf.SingleVisualizer):
@@ -2561,18 +2742,35 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
             cf.set_ax(ax, xlabel='Angle', ylabel='CDF', legend_loc='lower right')
         elif dim == '3D':
             angle_3D_dict = self.animal_info.angle_3D
-            azim_matrix = angle_3D_dict['azim_matrix']
-            elev_matrix = angle_3D_dict['elev_matrix']
+            azim_matrix = angle_3D_dict['azim']
+            elev_matrix = angle_3D_dict['elev']
+            
+            SC_int = scale_SC_to_int(SC, minimal_tol=self.minimal_tol)
+            
+            azim_value = cf.repeat_data(azim_matrix, SC_int)
+            elev_value = cf.repeat_data(elev_matrix, SC_int)
+
+            bin_num = self.bin_num
+            angle_heatmap, *args = cf.get_hist_2d(azim_value, elev_value, bin_num, bin_num)
+            cf.sns_marginal_heatmap(ax, angle_heatmap, outside=False, heatmap_kwargs=dict(cmap=cf.get_cmap([cf.WHITE, color]), show_xtick=False, show_ytick=False), x_color=color, y_color=color)
+            cf.set_ax(ax, xlabel='Azimuth', ylabel='Elevation', title=data_or_model)
+            return angle_heatmap
 
     def data_model_angle_distribution(self, ax, dim='2D'):
+        '''
+        for 2D, same ax
+        for 3D, ax be shape (2,) with ax[0] data and ax[1] model
+        '''
         if dim == '2D':
             angle_matrix = self.animal_info.angle_2D
-            visualize_data_model_distribution_scaled_by_SC(ax, angle_matrix, self.SC_data, self.SC_model_masked, minimal_tol=self.minimal_tol, distribution_type='CDF', distribution_kwargs=None)
+            visualize_data_model_distribution_repeated_by_SC(ax, angle_matrix, self.SC_data, self.SC_model_masked, minimal_tol=self.minimal_tol, distribution_type='CDF', distribution_kwargs=None)
             cf.set_ax(ax, xlabel='Angle', ylabel='CDF', legend_loc='lower right')
         elif dim == '3D':
-            angle_3D_dict = self.animal_info.angle_3D
-            azim_matrix = angle_3D_dict['azim_matrix']
-            elev_matrix = angle_3D_dict['elev_matrix']
+            r_data = self.angle_distribution(ax[0], data_or_model='data', dim='3D')
+            r_model = self.angle_distribution(ax[1], data_or_model='model', dim='3D')
+            jsd = cf.get_jsd(r_data.flatten(), r_model.flatten())
+
+            cf.add_text(ax[1], x=0.5, y=1.7, text=f'JSD={round(jsd, 3)}', va='center', ha='center', fontsize=cf.LABEL_SIZE)
 
     def intrinsic_proportion(self, ax):
         if self.animal_info.animal_and_dataset_key == 'marmoset_majka':
@@ -2703,13 +2901,31 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         cf.add_vline(ax, x=self.axon_growth_model.get_unique_Lambda() * 5, color=cf.RED, linestyle='--', label='$5\Lambda$')
         cf.set_ax(ax, xlabel=f'Threshold (mm)', ylabel='Correlation', legend_loc='lower right')
 
+    def get_category_longrange_SC(self, dim='2D'):
+        results = get_category_longrange_connection(self.SC_data, self.animal, self.dataset_key, longrange_threshold=self.axon_growth_model.get_unique_Lambda() * 5, dim=dim)
+        return results
+
     def category_long_range_SC(self, ax):
-        results = get_category_longrange_connection(self.SC_data, self.animal, self.dataset_key, longrange_threshold=self.axon_growth_model.get_unique_Lambda() * 5, dim='2D')
+        results = self.get_category_longrange_SC(dim='2D')
         longrange_connection_sum = results['longrange_connection_sum']
         area_category_in_order = get_area_category_in_order()
 
-        cf.plt_bar(ax, range(len(area_category_in_order)), [longrange_connection_sum[area] for area in area_category_in_order])
+        cf.plt_bar(ax, range(len(area_category_in_order)), [longrange_connection_sum[c] for c in area_category_in_order])
         cf.set_ax(ax, ylabel='Long range sum', xtick=range(len(area_category_in_order)), xtick_label=area_category_in_order, xtick_rotation=90)
+
+    def injection_deviation_rate_performance_scatter(self, ax, performance_metric='correlation', mode='3D', diagonal=False):
+        deviation_rate_dict = get_injection_deviation_rate(animal=self.animal, dataset_key=self.dataset_key, mode=mode)
+        if performance_metric == 'correlation':
+            if diagonal:
+                SCt_data = self.animal_info.SCt_data
+                SCt_model_masked = self.axon_growth_model.SC_model_dict[SC_type_to_SC_dict_key_include_diagonal(self.animal_info.SC_type)]
+                performance_dict = area_level_correlation(SC_data=SCt_data, SC_model=SCt_model_masked, animal=self.animal, dataset_key=self.dataset_key, diagonal=True)
+            else:
+                performance_dict = area_level_correlation(SC_data=self.SC_data, SC_model=self.SC_model_masked, animal=self.animal, dataset_key=self.dataset_key, diagonal=False)
+        x = [deviation_rate_dict[area] for area in performance_dict.keys()]
+        y = [performance_dict[area] for area in performance_dict.keys()]
+        cf.plt_linregress(ax, x, y, show_list=['p', 'r'], text_kwargs={'text_x': 0.1, 'text_y': 0.1})
+        cf.set_ax(ax, xlabel='Injection deviation rate', ylabel=performance_metric)
 
     def direction_preference_performance_scatter(self, ax, performance_metric='correlation', mode='uniform', diagonal=False):
         if performance_metric == 'correlation':
@@ -2725,6 +2941,15 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         y = [performance_dict[area] for area in performance_dict.keys()]
         cf.plt_linregress(ax, x, y, show_list=['p', 'r'])
         cf.set_ax(ax, xlabel='Direction preference', ylabel=performance_metric)
+
+    def twoD_threeD_distance_scatter(self, ax):
+        distance_2D = self.animal_info.distance_2D
+        distance_3D = self.animal_info.distance_3D
+        reordered_distance_3D = cf.reorder_df(distance_3D, new_row=distance_2D.index, new_col=distance_2D.columns)
+        x = reordered_distance_3D.values.flatten()
+        y = distance_2D.values.flatten()
+        cf.plt_linregress(ax, x, y, show_list=['r'], scatter_mode='density', scatter_kwargs={'cbar_kwargs': {'ticks': []}})
+        cf.set_ax(ax, xlabel='3D Distance (mm)', ylabel='2D Distance (mm)')
 
     def angle_distance_scatter(self, ax):
         mask = get_weight_category_mask(self.animal, self.dataset_key, diagonal=False)
@@ -2760,7 +2985,7 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
                     flatten_distance.append(distance_matrix.loc[source, target])
                     flatten_relative_error.append(relative_error.loc[source, target])
         cf.plt_smooth_scatter_line(ax, flatten_distance, flatten_relative_error)
-        cf.set_ax(ax, xlabel=f'Distance {dim} (mm)', ylabel='Relative error')
+        cf.set_ax(ax, xlabel=f'Distance {dim} (mm)', ylabel='Relative error', legend_loc='lower left', bbox_to_anchor=(0, 0.95))
 
 
 class MultiCaseVisualizer(cf.MultiVisualizerByCol):
@@ -2900,6 +3125,8 @@ class PaperFig:
             distance_kwargs_list.append({'ax': ax[1], 'data_or_model': 'data', 'dim': '2D', 'linregress': True})
         self.multi_visualizer.multi_ax_plot_by_single_visualizer('data_model_angle_distribution', angle_kwargs_list)
         self.multi_visualizer.multi_ax_plot_by_single_visualizer('distance_distribution', distance_kwargs_list)
+        for title, ax in ax_dict.items():
+            ax[1].set_title('')
         self.multi_visualizer.add_tag()
         self.multi_visualizer.add_subfig_title()
         self.multi_visualizer.rm_redundant_xylabel()
@@ -2989,8 +3216,10 @@ class PaperFig:
         single_visualizer.connection_on_flatmap(ax, data_or_model='model', which_area='A1-2')
 
         ax = ax_dict['e']
+        cf.rm_ax_axis(ax)
 
         ax = ax_dict['f']
+        cf.rm_ax_axis(ax)
 
         cf.save_fig(fig, self.figdir+'/fig_5', **self.save_fig_kwargs)
 
@@ -3033,7 +3262,7 @@ class PaperFig:
         visualize_scaling_law(ax, self.multi_visualizer.single_visualizer_list, dim='2D')
 
         ax = ax_dict['c']
-        
+        visualize_longrange_proportion_correlation_heatmap(ax, self.multi_visualizer.single_visualizer_list, dim='2D')
         cf.add_axes_dict_tag(axes_dict=ax_dict, ref_ax=axes[0])
 
         cf.save_fig(fig, self.figdir+'/fig_7', **self.save_fig_kwargs)
@@ -3051,17 +3280,21 @@ class PaperFig:
         ax_dict['c'] = axes[2]
 
         ax = ax_dict['a']
-        single_visualizer.direction_preference_performance_scatter(ax, performance_metric='correlation', mode='uniform', diagonal=False)
+        # single_visualizer.direction_preference_performance_scatter(ax, performance_metric='correlation', mode='uniform', diagonal=True)
+        # 标一下FLNt？
 
         ax = ax_dict['b']
         which_area = 'A19M'
         single_visualizer.connection_on_flatmap(ax, data_or_model='data', which_area=which_area)
 
         injection_site = single_visualizer.animal_info.injection_site_2D
-        injection_x = injection_site[which_area][0]
-        injection_y = injection_site[which_area][1]
+        injection_x = injection_site[which_area][0][0]
+        injection_y = injection_site[which_area][0][1]
         cf.plt_scatter(ax, injection_x, injection_y, color=cf.YELLOW, label='Injection site', s=50)
         cf.set_ax(ax, xlim=[injection_x-5, injection_x+5], ylim=[injection_y-5, injection_y+5])
+
+        ax = ax_dict['c']
+        single_visualizer.injection_deviation_rate_performance_scatter(ax, performance_metric='correlation', mode='2D', diagonal=True)
 
         cf.add_axes_dict_tag(axes_dict=ax_dict, ref_ax=axes[0])
 
@@ -3078,30 +3311,51 @@ class PaperFig:
             animal_and_dataset_key = single_visualizer.animal_info.animal_and_dataset_key
             performance_dict[animal_and_dataset_key] = get_performance_dict(SC_data=single_visualizer.SC_data, SC_model=single_visualizer.SC_model_masked, animal=animal, dataset_key=dataset_key, diagonal=False)
 
-        fig, ax = cf.get_fig_ax(ncols=len(self.animal_list))
+        fig, ax = cf.get_fig_ax(ncols=len(self.animal_list), ax_width=cf.AX_WIDTH*0.8)
         ax = cf.merge_ax(ax)
-        cf.plt_group_bar_dict(ax, performance_dict)
+        cf.plt_group_bar_dict(ax, performance_dict, width=0.05)
         cf.set_ax(ax, xtick=range(len(self.animal_list)), xtick_label=self.animal_list, ylim=[0, 1], legend_kwargs={'ncols': 3}, legend_loc='lower left', bbox_to_anchor=(0, 1))
 
         cf.save_fig(fig, self.figdir+'/SI_fig_1', **self.save_fig_kwargs)
 
-    def SI_fig_2(self):
+    def SI_fig_2(self, marmoset_V4_timedir):
         '''
         marmoset_V4 connection matrix, UAR
         '''
+        fig, ax = cf.get_fig_ax(nrows=1, ncols=2)
         pass
 
     def SI_fig_3(self):
         '''
         2D & 3D distance
         '''
-        pass
+        get_ax_kwargs = {'nrows': 1}
+        get_suitable_figsize_kwargs = {'nrows': 1}
+        fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
+        twoD_threeD_distance_scatter_kwargs_list = []
+        for title, ax in ax_dict.items():
+            twoD_threeD_distance_scatter_kwargs_list.append({'ax': ax})
+        self.multi_visualizer.multi_ax_plot_by_single_visualizer('twoD_threeD_distance_scatter', twoD_threeD_distance_scatter_kwargs_list)
+        self.multi_visualizer.add_tag()
+        self.multi_visualizer.add_subfig_title()
+        self.multi_visualizer.rm_redundant_xylabel()
+        self.multi_visualizer.save_fig(self.figdir+'/SI_fig_3')
 
     def SI_fig_4(self):
         '''
         3D angle distribution, data & model
         '''
-        pass
+        get_ax_kwargs = {'nrows': 2}
+        get_suitable_figsize_kwargs = {'nrows': 2}
+        fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
+        data_model_angle_distribution_kwarg_list = []
+        for title, ax in ax_dict.items():
+            data_model_angle_distribution_kwarg_list.append({'ax': ax, 'dim': '3D'})
+        self.multi_visualizer.multi_ax_plot_by_single_visualizer('data_model_angle_distribution', data_model_angle_distribution_kwarg_list)
+        self.multi_visualizer.add_tag()
+        self.multi_visualizer.add_subfig_title(y=1.0)
+        self.multi_visualizer.rm_redundant_xylabel()
+        self.multi_visualizer.save_fig(self.figdir+'/SI_fig_4')
 
     def SI_fig_5(self):
         '''
@@ -3131,8 +3385,10 @@ class PaperFig:
         '''
         local_multi_visualizer = cf.MultiVisualizerByRow.from_multi_visualizer_instance(self.multi_visualizer)
         with local_multi_visualizer.temporary_disable(['marmoset_majka']):
-            get_ax_kwargs = {'nrows': 1, 'ncols': 6}
-            get_suitable_figsize_kwargs = {'nrows': 1, 'ncols': 6}
+            margin = cf.MARGIN.copy()
+            margin['top'] -= 0.1
+            get_ax_kwargs = {'nrows': 1, 'ncols': 6, 'margin': margin}
+            get_suitable_figsize_kwargs = {'nrows': 1, 'ncols': 6, 'margin': margin, 'which': 'margin'}
             fig_dict, ax_dict = local_multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
             distance_SC_data_kwargs_list = []
             distance_SC_model_kwargs_list = []
@@ -3154,7 +3410,7 @@ class PaperFig:
             local_multi_visualizer.multi_ax_plot_by_single_visualizer('distance_distribution', distance_distribution_data_kwargs_list)
             local_multi_visualizer.multi_ax_plot_by_single_visualizer('distance_distribution', distance_distribution_model_kwargs_list)
             local_multi_visualizer.add_tag()
-            local_multi_visualizer.add_subfig_title(y=1.2)
+            local_multi_visualizer.add_subfig_title(y=1.06)
             local_multi_visualizer.rm_redundant_xylabel()
             local_multi_visualizer.save_fig(self.figdir+'/SI_fig_7')
 
@@ -3187,7 +3443,7 @@ class PaperFig:
             kwargs_list.append({'ax': ax, 'dim': '2D'})
         self.multi_visualizer.multi_ax_plot_by_single_visualizer('distance_relative_error', kwargs_list)
         self.multi_visualizer.add_tag()
-        self.multi_visualizer.add_subfig_title()
+        self.multi_visualizer.add_subfig_title(y=1.05)
         self.multi_visualizer.rm_redundant_xylabel()
         self.multi_visualizer.save_fig(self.figdir+'/SI_fig_9')
 
