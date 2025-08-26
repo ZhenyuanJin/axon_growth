@@ -270,7 +270,7 @@ def generate_angle_matrix(animal, dataset_key, dim='2D'):
         split_angle_matrix = cf.get_zero_df(full_split_name, full_split_name)
         for i, center_i in area_center_dict.items():
             for j, center_j in area_center_dict.items():
-                split_angle_matrix.loc[i, j] = cf.get_angle(center_i, center_j)
+                split_angle_matrix.loc[i, j] = cf.get_angle(center_i, center_j, angle_range='-180:180')
         angle_matrix = convert_split_df_to_normal(split_angle_matrix, animal, dataset_key, method='mean')
         cf.save_pkl(angle_matrix, animal_info.angle_matrix_dir + 'angle_matrix_2D')
     else:
@@ -458,7 +458,7 @@ class AnimalInfo(AnimalDir):
         '''
         super().__init__(animal, dataset_key)
         self.force_re_preprocess = False
-        # self.force_re_preprocess = True
+        self.force_re_preprocess = True
         self._re_preprocess_dict = {} # 运行过的计算,标记为True
 
         SC_type_dict = {'mouse_gamanut': 'FLNe', 'marmoset_majka': 'FLNe', 'marmoset_V4': 'FLNe', 'macaque_markov29': 'FLNe', 'macaque_markov40': 'FLNe', 'human_lariviere': 'Dmri'}
@@ -1601,8 +1601,8 @@ def generate_SC_from_axon_source_target(animal, dataset_key, outcomes_dir=None, 
     if indices_ss is None or indices_tt is None:
         axon_growth_model = AxonGrowthModel()
         axon_growth_model.set_timedir(timedir)
-        indices_ss = axon_growth_model.get_value_from_simulation_results('indices_ss')
-        indices_tt = axon_growth_model.get_value_from_simulation_results('indices_tt')
+        indices_ss = axon_growth_model.get_simulation_value('indices_ss')
+        indices_tt = axon_growth_model.get_simulation_value('indices_tt')
     
     animal_info = AnimalInfo(animal, dataset_key)
     full_name = animal_info.full_name
@@ -1733,8 +1733,8 @@ class AxonGrowthModel(cf.MetaModel):
         try:
             return load_SC_model_dict(self.outcomes_dir)
         except:
-            indices_ss = self.get_value_from_simulation_results('indices_ss')
-            indices_tt = self.get_value_from_simulation_results('indices_tt')
+            indices_ss = self.get_simulation_value('indices_ss')
+            indices_tt = self.get_simulation_value('indices_tt')
             return generate_SC_from_axon_source_target(self.animal, self.dataset_key, outcomes_dir=self.outcomes_dir, timedir=self.timedir, indices_ss=indices_ss, indices_tt=indices_tt)
 
     def get_suitable_SC_model(self):
@@ -2189,6 +2189,46 @@ def angle_ks_with_uniform(angle_list):
     return np.min(ks_distance_list)
 
 
+def get_angle_distribution_from_SC_dispersion(animal, dataset_key, SC, scale_value):
+    '''
+    利用随机生成在polygon内的点来计算每个area的angle_distribution
+    '''
+    animal_info = AnimalInfo(animal, dataset_key)
+    target_name = animal_info.target_name
+    source_name = animal_info.source_name
+    name_to_split_name_dict = animal_info.name_to_split_name_dict
+    pgon = animal_info.polygon_dict
+    
+    angle_dict = {}
+    ss=[]
+    tt=[]
+    indices_ss=[]
+    indices_tt=[]
+    for target in target_name:
+        angle_dict[target] = []
+        for spilit_target in name_to_split_name_dict[target]:
+            for source in source_name:
+                for spilit_source in name_to_split_name_dict[source]:
+                    # for a target and a source, the axon num should be SC[source, target]*constant, for a spilit_target and a spilit_source, the axon num should be SC[source, target]*constant*spilit_target_size/target_size*spilit_source_size/source_size
+                    target_size = 0
+                    for sub_target in name_to_split_name_dict[target]:
+                        target_size += pgon[sub_target].area
+                    source_size = 0
+                    for sub_source in name_to_split_name_dict[source]:
+                        source_size += pgon[sub_source].area
+                    for i in range(int(SC.loc[source, target]*scale_value*pgon[spilit_target].area/target_size*pgon[spilit_source].area/source_size)):
+                        t = pointpats.random.poisson(pgon[spilit_target],size=1)
+                        index_t = spilit_target
+                        s = pointpats.random.poisson(pgon[spilit_source],size=1)
+                        index_s = spilit_source
+                        tt.append(t)
+                        ss.append(s)
+                        indices_tt.append(index_t)
+                        indices_ss.append(index_s)
+                        angle_dict[target].append(cf.get_angle(source=[s[0], s[1]], target=[t[0], t[1]]))
+    return angle_dict
+
+
 def get_direction_preference(SC_data, animal, dataset_key, mode='uniform', SC_model=None):
     '''
     获取每个脑区的方向偏好
@@ -2196,14 +2236,12 @@ def get_direction_preference(SC_data, animal, dataset_key, mode='uniform', SC_mo
     mode: uniform, 将数据和均匀分布比较; model, 将数据和均匀分布得到的模型比较
     '''
     animal_info = AnimalInfo(animal, dataset_key)
-    angle_matrix = animal_info.angle_2D
 
-    data_angle_dict = get_area_level_property_repeated_by_SC(SC_data, angle_matrix, animal, dataset_key)
-
+    data_angle_dict = get_angle_distribution_from_SC_dispersion(animal, dataset_key, SC_data, scale_value=10000)
     if mode == 'uniform':
         direction_preference_dict = {area: angle_ks_with_uniform(data_angle_dict[area]) for area in data_angle_dict.keys()}
     elif mode == 'model':
-        model_angle_dict = get_area_level_property_repeated_by_SC(SC_model, angle_matrix, animal, dataset_key)
+        model_angle_dict = get_angle_distribution_from_SC_dispersion(animal, dataset_key, SC_model, scale_value=10000)
         direction_preference_dict = {area: cf.get_ks(data_angle_dict[area], model_angle_dict[area]) for area in data_angle_dict.keys()}
     return direction_preference_dict
 
@@ -2314,13 +2352,11 @@ def get_injection_deviation_rate(animal, dataset_key, mode='2D'):
             area_center_dict = animal_info.area_center_dict_3D
             injection_site = animal_info.injection_site_3D
             radius = get_radius(mode)
-            print(radius)
             for area in target_name:
                 distance = []
                 for inj in injection_site[area]:
                     distance.append(np.linalg.norm(area_center_dict[area]-inj))
                 distance = np.mean(distance)
-                print(area, distance, radius[area])
                 injection_deviation_rate_dict[area] = distance/radius[area]
         return injection_deviation_rate_dict
     else:
@@ -2365,14 +2401,36 @@ def SC_symmetry_index():
     pass
 
 
-def connection_proportion_wrt_to_distance_neuron_level():
-    pass
+def connection_proportion_inside_threshold(threshold_list, animal, dataset_key, SC_mode='binary', distance_mode='2D'):
+    '''
+    计算特定距离范围内的连接比例
+
+    distance_mode: 2D or 3D
+    SC_mode: binary or weight
+    '''
+    animal_info = AnimalInfo(animal, dataset_key)
+    SC_data = animal_info.SC_data
+    processesd_SC_data = SC_data.copy()
+    processesd_SC_data = cf.get_sub_df(processesd_SC_data, animal_info.source_name, animal_info.target_name) # 只取source和target的部分
+    if SC_mode == 'binary':
+        processesd_SC_data = (processesd_SC_data > 0).astype(int)
+    elif SC_mode == 'weight':
+        pass
+    if distance_mode == '2D':
+        distance_matrix = animal_info.distance_2D
+    elif distance_mode == '3D':
+        distance_matrix = animal_info.distance_3D
+    sum_SC = np.nansum(processesd_SC_data.values)
+    proportion_list = []
+    for threshold in threshold_list:
+        masked_SC = processesd_SC_data.copy()
+        masked_SC[distance_matrix > threshold] = 0
+        proportion = np.nansum(masked_SC.values) / sum_SC
+        proportion_list.append(proportion)
+    return proportion_list
 
 
-def residual_heterogeneity():
-    '''
-    可以先用某种方式regress掉skew ness对于performance的影响,然后看看剩下的?
-    '''
+def multiple_injection_difference_ratio():
     pass
 # endregion
 
@@ -2417,6 +2475,16 @@ def show_area_boundary(ax, animal, dataset_key, show_area_name=False, text_fonts
     value_dict = {area: 0 for area in animal_info.full_name}
     cmap = cf.get_cmap([cf.TRANSPARENT])
     show_value_on_flatmap(ax, animal, dataset_key, value_dict=value_dict, show_area_name=show_area_name, text_fontsize=text_fontsize, edgecolor=edgecolor, fill=False, cbar=False, cmap=cmap)
+
+
+def show_whole_cortex_boundary(ax, animal, dataset_key, edgecolor=cf.BLACK):
+    animal_info = AnimalInfo(animal, dataset_key)
+    whole_cortex_coords = animal_info.whole_cortex_coords
+    
+    cf.plt_polygon(ax, whole_cortex_coords, color=edgecolor, fill=False)
+
+    ax.axis('off')
+    ax.axis('equal')
 
 
 def draw_rectangle_for_connection_matrix(ax, animal, dataset_key):
@@ -2556,6 +2624,20 @@ def visualize_data_model_distribution_repeated_by_SC(ax, some_property, SC_data,
         pass
 
 
+def visualize_data_uniform_distribution_repeated_by_SC(ax, some_property, SC_data, minimal_tol=None, distribution_type='CDF', distribution_kwargs=None):
+    '''
+    可视化数据和均匀分布的分布
+    '''
+    SC_data_int = scale_SC_to_int(SC_data, minimal_tol=minimal_tol)
+    repeated_property_data = cf.repeat_data(some_property, SC_data_int)
+    uniform_data = np.random.uniform(low=np.min(repeated_property_data), high=np.max(repeated_property_data), size=len(repeated_property_data))
+    distribution_kwargs = cf.update_dict({}, distribution_kwargs)
+    if distribution_type == 'CDF':
+        cf.plt_compare_cdf_ks(ax, data1=repeated_property_data, data2=uniform_data, color1=DATA_COLOR, color2=cf.BLACK, label1='data', label2='uniform', **distribution_kwargs)
+    elif distribution_type == 'hist':
+        pass
+
+
 def visualize_macaque_marmoset_performance_similarity(ax, macaque_performance_dict, marmoset_performance_dict):
     combined_macaque_performance_dict = coarse_grain_to_combined(macaque_performance_dict, 'macaque', 'markov40')
     combined_marmoset_performance_dict = coarse_grain_to_combined(marmoset_performance_dict, 'marmoset', 'majka')
@@ -2642,7 +2724,8 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         self.animal_info = AnimalInfo(animal, dataset_key)
         self.SC_data = self.animal_info.SC_data
         self.model_timedir = model_timedir
-        self.minimal_tol = 1e-3 # 后续改成高精度
+        SC_data_array = self.animal_info.SC_data.values
+        self.minimal_tol = np.min(SC_data_array[SC_data_array > 0])
         self.bin_num = cf.BIN_NUM
 
         self.axon_growth_model = AxonGrowthModel()
@@ -2772,6 +2855,14 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
 
             cf.add_text(ax[1], x=0.5, y=1.7, text=f'JSD={round(jsd, 3)}', va='center', ha='center', fontsize=cf.LABEL_SIZE)
 
+    def data_uniform_angle_distribution(self, ax, dim='2D'):
+        if dim == '2D':
+            angle_matrix = self.animal_info.angle_2D
+            visualize_data_uniform_distribution_repeated_by_SC(ax, angle_matrix, self.SC_data, minimal_tol=self.minimal_tol, distribution_type='CDF', distribution_kwargs=None)
+            cf.set_ax(ax, xlabel='Angle', ylabel='CDF', legend_loc='lower right')
+        elif dim == '3D':
+            raise NotImplementedError
+
     def intrinsic_proportion(self, ax):
         if self.animal_info.animal_and_dataset_key == 'marmoset_majka':
             target_name = self.animal_info.target_name
@@ -2829,59 +2920,63 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         '''
         显示一个pos内的ss的所有presynaptic neuron
         '''
-        ss = self.axon_growth_model.get_value_from_simulation_results('ss')
-        tt = self.axon_growth_model.get_value_from_simulation_results('tt')
+        ss = self.axon_growth_model.get_simulation_value('ss')
+        tt = self.axon_growth_model.get_simulation_value('tt')
         
         tt_pos_distance = np.linalg.norm(tt - pos, axis=1)
         in_circle_index = np.where(tt_pos_distance < radius)[0]
         ss_corresponding = ss[in_circle_index]
         
-        cf.plt_scatter(ax, ss_corresponding[:, 0], ss_corresponding[:, 1], color=cf.BLACK, label='source neuron', s=1)
-        show_area_boundary(ax, animal=self.animal, dataset_key=self.dataset_key, show_area_name=True, text_fontsize=cf.FONT_SIZE/3, edgecolor=cf.BLACK)
+        cf.plt_scatter(ax, ss_corresponding[:, 0], ss_corresponding[:, 1], color=cf.BLACK, label='source neuron', s=5)
+        show_whole_cortex_boundary(ax, animal=self.animal, dataset_key=self.dataset_key, edgecolor=cf.BLACK)
+
+        cf.add_circle_patch(ax, center=pos, radius=radius, edgecolor=cf.WHITE, facecolor=cf.WHITE)
 
     def retrograde_neuron_by_area(self, ax, area):
         '''
         显示一个area的所有presynaptic neuron
         '''
-        ss = self.axon_growth_model.get_value_from_simulation_results('ss')
-        indices_tt = self.axon_growth_model.get_value_from_simulation_results('indices_tt')
+        ss = self.axon_growth_model.get_simulation_value('ss')
+        indices_tt = self.axon_growth_model.get_simulation_value('indices_tt')
 
         # 找到indices_tt中为area的索引
         tt_indices_in_area_indices = np.where(indices_tt == area)[0]
         ss_corresponding = ss[tt_indices_in_area_indices]
 
-        cf.plt_scatter(ax, ss_corresponding[:, 0], ss_corresponding[:, 1], color=cf.BLACK, label='source neuron', s=1)
+        cf.plt_scatter(ax, ss_corresponding[:, 0], ss_corresponding[:, 1], color=cf.BLACK, label='source neuron', s=5)
         cf.plt_polygon(ax, xy=self.animal_info.coords_dict[area], color=cf.GRAY)
-        show_area_boundary(ax, animal=self.animal, dataset_key=self.dataset_key, show_area_name=True, text_fontsize=cf.FONT_SIZE/3, edgecolor=cf.BLACK)
+        show_area_boundary(ax, animal=self.animal, dataset_key=self.dataset_key, show_area_name=False, text_fontsize=cf.FONT_SIZE/3, edgecolor=cf.BLACK)
 
     def anterograde_neuron_by_pos(self, ax, pos, radius):
         '''
         显示一个pos内的ss的所有postsynaptic neuron
         '''
-        ss = self.axon_growth_model.get_value_from_simulation_results('ss')
-        tt = self.axon_growth_model.get_value_from_simulation_results('tt')
+        ss = self.axon_growth_model.get_simulation_value('ss')
+        tt = self.axon_growth_model.get_simulation_value('tt')
 
         ss_pos_distance = np.linalg.norm(ss - pos, axis=1)
         in_circle_index = np.where(ss_pos_distance < radius)[0]
         tt_corresponding = tt[in_circle_index]
 
-        cf.plt_scatter(ax, tt_corresponding[:, 0], tt_corresponding[:, 1], color=cf.BLACK, label='target neuron', s=1)
-        show_area_boundary(ax, animal=self.animal, dataset_key=self.dataset_key, show_area_name=True, text_fontsize=cf.FONT_SIZE/3, edgecolor=cf.BLACK)
+        cf.plt_scatter(ax, tt_corresponding[:, 0], tt_corresponding[:, 1], color=cf.BLACK, label='target neuron', s=5)
+        show_whole_cortex_boundary(ax, animal=self.animal, dataset_key=self.dataset_key, edgecolor=cf.BLACK)
+
+        cf.add_circle_patch(ax, center=pos, radius=radius, edgecolor=cf.WHITE, facecolor=cf.WHITE)
 
     def anterograde_neuron_by_area(self, ax, area):
         '''
         显示一个area的所有postsynaptic neuron
         '''
-        tt = self.axon_growth_model.get_value_from_simulation_results('tt')
-        indices_ss = self.axon_growth_model.get_value_from_simulation_results('indices_ss')
+        tt = self.axon_growth_model.get_simulation_value('tt')
+        indices_ss = self.axon_growth_model.get_simulation_value('indices_ss')
         
         # 找到indices_ss中为area的索引
         ss_indices_in_area_indices = np.where(indices_ss == area)[0]
         tt_corresponding = tt[ss_indices_in_area_indices]
 
-        cf.plt_scatter(ax, tt_corresponding[:, 0], tt_corresponding[:, 1], color=cf.BLACK, label='target neuron', s=1)
+        cf.plt_scatter(ax, tt_corresponding[:, 0], tt_corresponding[:, 1], color=cf.BLACK, label='target neuron', s=5)
         cf.plt_polygon(ax, xy=self.animal_info.coords_dict[area], color=cf.GRAY)
-        show_area_boundary(ax, animal=self.animal, dataset_key=self.dataset_key, show_area_name=True, text_fontsize=cf.FONT_SIZE/3, edgecolor=cf.BLACK)
+        show_area_boundary(ax, animal=self.animal, dataset_key=self.dataset_key, show_area_name=False, text_fontsize=cf.FONT_SIZE/3, edgecolor=cf.BLACK)
 
     def rm_longrange_correlation_change(self, ax, dim='2D', point_num=100, rm_mode='data'):
         if dim == '2D':
@@ -2939,7 +3034,7 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
                 direction_preference_dict = get_direction_preference(self.SC_data, self.animal, self.dataset_key, mode=mode, SC_model=self.SC_model_masked)
         x = [direction_preference_dict[area] for area in performance_dict.keys()]
         y = [performance_dict[area] for area in performance_dict.keys()]
-        cf.plt_linregress(ax, x, y, show_list=['p', 'r'])
+        cf.plt_linregress(ax, x, y, show_list=['p', 'r'], text_kwargs={'text_x': 0.1, 'text_y': 0.1})
         cf.set_ax(ax, xlabel='Direction preference', ylabel=performance_metric)
 
     def twoD_threeD_distance_scatter(self, ax):
@@ -3123,7 +3218,7 @@ class PaperFig:
         for title, ax in ax_dict.items():
             angle_kwargs_list.append({'ax': ax[0], 'dim': '2D'})
             distance_kwargs_list.append({'ax': ax[1], 'data_or_model': 'data', 'dim': '2D', 'linregress': True})
-        self.multi_visualizer.multi_ax_plot_by_single_visualizer('data_model_angle_distribution', angle_kwargs_list)
+        self.multi_visualizer.multi_ax_plot_by_single_visualizer('data_uniform_angle_distribution', angle_kwargs_list)
         self.multi_visualizer.multi_ax_plot_by_single_visualizer('distance_distribution', distance_kwargs_list)
         for title, ax in ax_dict.items():
             ax[1].set_title('')
@@ -3220,6 +3315,9 @@ class PaperFig:
 
         ax = ax_dict['f']
         cf.rm_ax_axis(ax)
+        pos = animal_info.injection_site_2D['A1-2'][0]
+        radius = 0.4
+        single_visualizer.retrograde_neuron_by_pos(ax, pos, radius)
 
         cf.save_fig(fig, self.figdir+'/fig_5', **self.save_fig_kwargs)
 
@@ -3280,8 +3378,8 @@ class PaperFig:
         ax_dict['c'] = axes[2]
 
         ax = ax_dict['a']
-        # single_visualizer.direction_preference_performance_scatter(ax, performance_metric='correlation', mode='uniform', diagonal=True)
-        # 标一下FLNt？
+        single_visualizer.direction_preference_performance_scatter(ax, performance_metric='correlation', mode='uniform', diagonal=False)
+        cf.move_ax(ax, d_right=0.06, keep_size=True)
 
         ax = ax_dict['b']
         which_area = 'A19M'
@@ -3294,7 +3392,7 @@ class PaperFig:
         cf.set_ax(ax, xlim=[injection_x-5, injection_x+5], ylim=[injection_y-5, injection_y+5])
 
         ax = ax_dict['c']
-        single_visualizer.injection_deviation_rate_performance_scatter(ax, performance_metric='correlation', mode='2D', diagonal=True)
+        single_visualizer.injection_deviation_rate_performance_scatter(ax, performance_metric='correlation', mode='3D', diagonal=True)
 
         cf.add_axes_dict_tag(axes_dict=ax_dict, ref_ax=axes[0])
 
