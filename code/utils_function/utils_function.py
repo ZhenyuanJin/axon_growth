@@ -1462,14 +1462,7 @@ def get_direction_method_type(direction_method):
         return 'random'
 
 
-def get_direction_func(direction_method):
-    '''
-    获取方向函数
-    '''
-    pass
-
-
-def part_generate_axon_source_target(animal, dataset_key, direction_method, length_method, direction_params, length_params, na, point_density, part_index, model_type='send', use_part_index_as_seed=True, max_iteration=10):
+def part_generate_axon_source_target(animal, dataset_key, direction_method, length_method, direction_params, length_params, na, point_density, part_index, process_num, model_type='send', max_iteration=10, the_seed=0):
     '''
     Generate the source and target of the axon growth model.
 
@@ -1502,10 +1495,7 @@ def part_generate_axon_source_target(animal, dataset_key, direction_method, leng
     indices_ss=[]
     indices_tt=[]
 
-    if use_part_index_as_seed:
-        seed = part_index
-    else:
-        seed = cf.get_time_seed() * part_index # 保证每个part的seed不同
+    seed = the_seed * process_num + part_index # 保证每个part的seed不同
     rng = cf.get_local_rng(seed=seed)
 
     neuron_num = get_neuron_num(neuron_density=point_density, polygon_dict=polygon_dict, total_num=int(na), animal=animal, dataset_key=dataset_key)
@@ -1686,8 +1676,8 @@ class AxonGrowthModel(cf.MetaModel):
         self.process_num = 1
         self.model_type = 'send'
         self.use_neuron_density_to_generate = False
-        self.use_part_index_as_seed = True
         self.max_iteration = 10
+        self.the_seed = 0
 
     @property
     def point_density(self):
@@ -1714,7 +1704,7 @@ class AxonGrowthModel(cf.MetaModel):
             return Lambda
 
     def run_detail(self):
-        generation_kwargs = {'animal': self.animal, 'dataset_key': self.dataset_key, 'direction_method': self.direction_method, 'length_method': self.length_method, 'direction_params': self.direction_params, 'length_params': self.length_params, 'na': int(self.na/self.process_num), 'point_density': self.point_density, 'model_type': self.model_type, 'use_part_index_as_seed': self.use_part_index_as_seed, 'max_iteration': self.max_iteration}
+        generation_kwargs = {'animal': self.animal, 'dataset_key': self.dataset_key, 'direction_method': self.direction_method, 'length_method': self.length_method, 'direction_params': self.direction_params, 'length_params': self.length_params, 'na': int(self.na/self.process_num), 'point_density': self.point_density, 'process_num': self.process_num, 'model_type': self.model_type, 'max_iteration': self.max_iteration, 'the_seed': self.the_seed}
         generate_for_list = list(range(self.process_num))
         axon_list = cf.multi_process_list_for(process_num=self.process_num, func=part_generate_axon_source_target, kwargs=generation_kwargs, for_list=generate_for_list, for_idx_name='part_index')
         # 合并结果
@@ -1755,6 +1745,14 @@ class AxonGrowthModel(cf.MetaModel):
 
     def get_suitable_SC_model_masked_as_data(self):
         return self.get_masked_SC_as_data(SC_type_to_SC_dict_key(self.animal_info.SC_type))
+
+    def get_data_model_correlation(self, diagonal=False):
+        if diagonal:
+            raise NotImplementedError
+        else:
+            SC_model = self.get_suitable_SC_model_masked_as_data()
+            SC_data = self.animal_info.SC_data
+            return data_model_correlation(SC_model, SC_data, self.animal, self.dataset_key, diagonal=diagonal)
 
     def get_area_level_correlation(self, diagonal=False):
         '''
