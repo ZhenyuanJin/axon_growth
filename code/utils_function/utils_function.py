@@ -2511,14 +2511,14 @@ def draw_mask_for_unmeasured_block(ax, animal, dataset_key):
                 unmeasured_matrix[:, i] = np.nan
             else:
                 unmeasured_matrix[:, i] = 1
-        cf.add_text(ax, x=(target_num+source_num)/2, y=source_num/2, text='Unknown', fontsize=cf.LABEL_SIZE, ha='center', va='center', transform='data')
+        cf.add_text(ax, x=(target_num+source_num)/2, y=source_num/2, text='Unmeasured', fontsize=cf.LABEL_SIZE, ha='center', va='center', transform='data')
     if target_num > source_num:
         for i in range(target_num):
             if i < source_num:
                 unmeasured_matrix[i, :] = np.nan
             else:
                 unmeasured_matrix[i, :] = 1
-        cf.add_text(ax, x=target_num/2, y=(target_num+source_num)/2, text='Unknown', fontsize=cf.LABEL_SIZE, ha='center', va='center', transform='data')
+        cf.add_text(ax, x=target_num/2, y=(target_num+source_num)/2, text='Unmeasured', fontsize=cf.LABEL_SIZE, ha='center', va='center', transform='data')
     cf.sns_heatmap(ax, unmeasured_matrix, show_xtick=False, show_ytick=False, cmap=cmap, cbar=False)
 
 
@@ -3184,26 +3184,44 @@ class PaperFig:
     def fig_2(self):
         '''
         连接矩阵
+        accuracy in category & correlation
         '''
-        get_ax_kwargs = {'nrows': 2}
-        get_suitable_figsize_kwargs = {'nrows': 2}
-        fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
-        kwargs_list = []
-        for title, ax in ax_dict.items():
-            kwargs_list.append({'ax_data': ax[0], 'ax_model': ax[1]})
-        self.multi_visualizer.multi_ax_plot_by_single_visualizer('data_model_SC', kwargs_list)
-        # self.multi_visualizer.add_tag()
-        ax_list_in_order = []
-        for title, ax in ax_dict.items():
-            ax_list_in_order.append(ax[0])
-        cf.add_axes_list_tag_by_order(ax_list_in_order)
-        self.multi_visualizer.add_subfig_title(y=1.0)
-        self.multi_visualizer.rm_redundant_xylabel()
-        self.multi_visualizer.save_fig(self.figdir+'/fig_2')
+        fig, axes = cf.get_fig_ax(nrows=3, ncols=self.animal_num)
+        
+        for i in range(self.animal_num):
+            animal = self.animal_list[i]
+            dataset_key = self.dataset_key_list[i]
+            single_visualizer = self.multi_visualizer.get_single_visualizer(cf.cat(animal, dataset_key))
+
+            ax_data = axes[0, i]
+            ax_model = axes[1, i]
+            single_visualizer.data_model_SC(ax_data=ax_data, ax_model=ax_model)
+            cf.add_axes_title(ax_data, title=animal)
+        
+        merged_ax = cf.merge_ax(axes[2, :])
+        performance_dict = {}
+        for single_visualizer in self.multi_visualizer.single_visualizer_list:
+            animal = single_visualizer.animal
+            dataset_key = single_visualizer.dataset_key
+            animal_and_dataset_key = single_visualizer.animal_info.animal_and_dataset_key
+            performance_dict[animal_and_dataset_key] = get_performance_dict(SC_data=single_visualizer.SC_data, SC_model=single_visualizer.SC_model_masked, animal=animal, dataset_key=dataset_key, diagonal=False)
+            performance_dict[animal_and_dataset_key].pop('accuracy_all', None) # 去掉accuracy all
+
+        ax = merged_ax
+        cf.plt_group_bar_dict(ax, performance_dict, width=0.05)
+        cf.set_ax(ax, xtick=range(len(self.animal_list)), xtick_label=self.animal_list, ylim=[0, 1], legend_kwargs={'ncols': 6}, legend_loc='lower left', bbox_to_anchor=(0, 1))
+
+        axes_list_in_order = []
+        for i in range(self.animal_num):
+            axes_list_in_order.append(axes[0, i])
+        axes_list_in_order.append(axes[2, 0])
+        cf.add_axes_list_tag_by_order(axes_list_in_order)
+
+        cf.save_fig(fig, self.figdir+'/fig_2', **self.save_fig_kwargs)
 
     def fig_3(self):
         '''
-        UAR与EDR
+        UAR,2D and 3D
         '''
         get_ax_kwargs = {'nrows': 2}
         get_suitable_figsize_kwargs = {'nrows': 2}
