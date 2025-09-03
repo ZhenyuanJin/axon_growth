@@ -51,7 +51,7 @@ for animal, dataset_key in zip(animal_list, dataset_key_list):
             na = int(8e6)
 
             axon_growth_model = uf.AxonGrowthModel()
-            params = {'animal': animal, 'dataset_key': dataset_key, 'animal_and_dataset_key': cf.cat(animal, dataset_key), 'direction_method': direction_method, 'length_method': length_method, 'direction_params': direction_params, 'length_params': length_params, 'na': na, 'process_num': 10}
+            params = {'animal': animal, 'dataset_key': dataset_key, 'animal_and_dataset_key': cf.cat(animal, dataset_key), 'direction_method': direction_method, 'length_method': length_method, 'direction_params': direction_params, 'length_params': length_params, 'na': na, 'process_num': 10, 'the_seed': the_seed}
             axon_growth_model.set_up(params=params, basedir=basedir, code_file_list=[cf.current_file(), '../utils_function/utils_function.py'])
             axon_growth_model.run()
             axon_growth_model.SC_model_dict
