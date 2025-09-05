@@ -31,6 +31,7 @@ from pstats import Stats
 import tracemalloc
 from collections import defaultdict
 import pdb
+from tqdm import tqdm
 
 
 # 数学和科学计算库
@@ -458,7 +459,7 @@ class AnimalInfo(AnimalDir):
         '''
         super().__init__(animal, dataset_key)
         self.force_re_preprocess = False
-        self.force_re_preprocess = True
+        # self.force_re_preprocess = True
         self._re_preprocess_dict = {} # 运行过的计算,标记为True
 
         SC_type_dict = {'mouse_gamanut': 'FLNe', 'marmoset_majka': 'FLNe', 'marmoset_V4': 'FLNe', 'macaque_markov29': 'FLNe', 'macaque_markov40': 'FLNe', 'human_lariviere': 'Dmri'}
@@ -2689,7 +2690,8 @@ def get_longrange_proportion_correlation(single_visualizer_list, dim='2D'):
         sum_i = precomputed_arrays[i]
         for j in range(n):
             sum_j = precomputed_arrays[j]
-            corr = st.spearmanr(sum_i, sum_j).correlation
+            # corr = st.spearmanr(sum_i, sum_j).correlation
+            corr = np.corrcoef(sum_i, sum_j)[0, 1]
             corr_pd.loc[animal_list[i], animal_list[j]] = corr
     
     return corr_pd
@@ -2714,7 +2716,8 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         self.SC_data = self.animal_info.SC_data
         self.model_timedir = model_timedir
         SC_data_array = self.animal_info.SC_data.values
-        self.minimal_tol = np.min(SC_data_array[SC_data_array > 0])
+        # self.minimal_tol = np.min(SC_data_array[SC_data_array > 0])
+        self.minimal_tol = 1e-3
         self.bin_num = cf.BIN_NUM
 
         self.axon_growth_model = AxonGrowthModel()
@@ -2806,9 +2809,8 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
             SC = self.SC_data
             color = DATA_COLOR
 
-        distribution_kwargs = cf.update_dict({'color': color}, distribution_kwargs)
-
         if dim == '2D':
+            distribution_kwargs = cf.update_dict({'color': color}, distribution_kwargs)
             angle_matrix = self.animal_info.angle_2D
             visualize_distribution_repeated_by_SC(ax, angle_matrix, SC, minimal_tol=self.minimal_tol, distribution_type='CDF', distribution_kwargs=distribution_kwargs)
             cf.set_ax(ax, xlabel='Angle', ylabel='CDF', legend_loc='lower right')
@@ -2824,7 +2826,7 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
 
             bin_num = self.bin_num
             angle_heatmap, *args = cf.get_hist_2d(azim_value, elev_value, bin_num, bin_num)
-            cf.sns_marginal_heatmap(ax, angle_heatmap, outside=False, heatmap_kwargs=dict(cmap=cf.get_cmap([cf.WHITE, color]), show_xtick=False, show_ytick=False), x_color=color, y_color=color)
+            cf.sns_marginal_heatmap(ax, angle_heatmap, outside=False, heatmap_kwargs=dict(cmap=cf.get_cmap([cf.WHITE, color]), show_xtick=False, show_ytick=False, vmax=0.02), x_color=color, y_color=color)
             cf.set_ax(ax, xlabel='Azimuth', ylabel='Elevation', title=data_or_model)
             return angle_heatmap
 
@@ -2849,6 +2851,33 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
             angle_matrix = self.animal_info.angle_2D
             visualize_data_uniform_distribution_repeated_by_SC(ax, angle_matrix, self.SC_data, minimal_tol=self.minimal_tol, distribution_type='CDF', distribution_kwargs={'show_list': ['KS']})
             cf.set_ax(ax, xlabel='Angle', ylabel='CDF', legend_loc='lower right')
+        elif dim == '3D':
+            raise NotImplementedError
+
+    def data_anlge_uniform_index_with_distance_threshold(self, ax, distance_threshold_list, dim='2D'):
+        if dim == '2D':
+            try:
+                r_list = cf.load_pkl(f'../../results/figs/angle_distance_independence_test/{self.animal_and_dataset_key}')
+            except:
+                distance_matrix = self.animal_info.distance_2D
+                angle_matrix = self.animal_info.angle_2D
+                SC_data = self.SC_data.copy()
+                SC_data_int = scale_SC_to_int(SC_data, minimal_tol=self.minimal_tol)
+                r_list = []
+                for distance_threshold in tqdm(distance_threshold_list):
+                    mask = distance_matrix <= distance_threshold
+                    some_property = angle_matrix[mask]
+                    SC_data_int_masked = SC_data_int[mask]
+                    
+                    repeated_property_data = cf.repeat_data(some_property, SC_data_int_masked)
+                    def uniform_cdf(x):
+                        return scipy.stats.uniform.cdf(x, loc=-np.pi, scale=2*np.pi)
+                    
+                    r = cf.get_ks(repeated_property_data, uniform_cdf)
+                    r_list.append(r)
+                cf.save_pkl(r_list, f'../../results/figs/angle_distance_independence_test/{self.animal_and_dataset_key}')
+            ks_list = [r_list[i]['KS'] for i in range(len(r_list))]
+            cf.plt_line(ax, x=distance_threshold_list, y=ks_list)
         elif dim == '3D':
             raise NotImplementedError
 
@@ -3056,6 +3085,44 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
 
         cf.set_ax(ax, xlabel='Distance (mm)', ylabel='Angle')
 
+    def angle_distance_independence_with_distance_threshold(self, ax, distance_threshold_list):
+        mask = get_weight_category_mask(self.animal, self.dataset_key, diagonal=False)
+        angle_matrix = self.animal_info.angle_2D
+        distance_matrix = self.animal_info.distance_2D
+        
+        try:
+            independence_list = cf.load_pkl(cf.pj('../../results/figs', 'angle_distance_independence_with_distance_threshold', self.animal_and_dataset_key))
+        except:
+            independence_list = []
+            for distance_threshold in distance_threshold_list:
+                angle_list = []
+                distance_list = []
+                for r in mask['all'].index:
+                    for c in mask['all'].columns:
+                        if mask['all'].loc[r, c] and distance_matrix.loc[r, c] >= distance_threshold:
+                            angle_list.append(angle_matrix.loc[r, c])
+                            distance_list.append(distance_matrix.loc[r, c])
+                result = angle_distance_independence_test(angle_list, distance_list, angle_bin_num=self.bin_num, distance_bin_num=self.bin_num)
+                independence_list.append(result)
+            cf.save_pkl(independence_list, cf.pj('../../results/figs', 'angle_distance_independence_with_distance_threshold', self.animal_and_dataset_key))
+
+        cf.rm_ax_axis(ax)
+        ax_up, ax_down = cf.split_ax(ax, keep_original=True, nrows=2)
+
+        JSD_list = [result['JSD'] for result in independence_list]
+        KL_list = [result['KL'] for result in independence_list]
+
+        cf.plt_line(ax_up, x=distance_threshold_list, y=JSD_list, color=cf.BLUE, label='JSD')
+        cf.plt_line(ax_up, x=distance_threshold_list, y=KL_list, color=cf.ORANGE, label='KL')
+
+        # 计算增长速度
+        diff_JSD = np.diff(JSD_list)
+        diff_KL = np.diff(KL_list)
+        cf.plt_line(ax_down, x=distance_threshold_list[1:], y=diff_JSD, color=cf.BLUE, label='dJSD')
+        cf.plt_line(ax_down, x=distance_threshold_list[1:], y=diff_KL, color=cf.ORANGE, label='dKL')
+
+        # cf.set_ax(ax, xlabel='Distance threshold (mm)')
+
     def distance_relative_error(self, ax, dim='2D'):
         if dim == '2D':
             distance_matrix = self.animal_info.distance_2D
@@ -3089,7 +3156,7 @@ class MultiCaseVisualizer(cf.MultiVisualizerByCol):
 
 @cf.tracker_with_time
 class PaperFig:
-    def __init__(self, model_timedir_list):
+    def __init__(self, model_timedir_list, marmoset_V4_timedir):
         self.animal_list = ['mouse', 'marmoset', 'macaque', 'human']
         self.dataset_key_list = ['gamanut', 'majka', 'markov40', 'lariviere']
         self.animal_num = len(self.animal_list)
@@ -3101,6 +3168,7 @@ class PaperFig:
         self.bbox_inches = 'tight'
         self.save_fig_kwargs = {'formats': self.formats, 'bbox_inches': self.bbox_inches}
         self.multi_visualizer.update_save_fig_kwargs(self.save_fig_kwargs)
+        self.marmoset_V4_timedir = marmoset_V4_timedir
 
     def fig_1(self):
         '''
@@ -3196,7 +3264,7 @@ class PaperFig:
             ax_data = axes[0, i]
             ax_model = axes[1, i]
             single_visualizer.data_model_SC(ax_data=ax_data, ax_model=ax_model)
-            cf.add_axes_title(ax_data, title=animal)
+            cf.add_axes_title(ax_data, title=animal, title_size=cf.SUP_TITLE_SIZE)
         
         merged_ax = cf.merge_ax(axes[2, :])
         performance_dict = {}
@@ -3209,7 +3277,7 @@ class PaperFig:
 
         ax = merged_ax
         cf.plt_group_bar_dict(ax, performance_dict, width=0.05)
-        cf.set_ax(ax, xtick=range(len(self.animal_list)), xtick_label=self.animal_list, ylim=[0, 1], legend_kwargs={'ncols': 6}, legend_loc='lower left', bbox_to_anchor=(0, 1))
+        cf.set_ax(ax, xtick=range(len(self.animal_list)), xtick_label=self.animal_list, ylim=[0, 1], legend_kwargs={'ncols': 6}, legend_loc='lower right', bbox_to_anchor=(1, 1))
 
         axes_list_in_order = []
         for i in range(self.animal_num):
@@ -3223,23 +3291,25 @@ class PaperFig:
         '''
         UAR,2D and 3D
         '''
-        get_ax_kwargs = {'nrows': 2}
-        get_suitable_figsize_kwargs = {'nrows': 2}
+        get_ax_kwargs = {'nrows': 3}
+        get_suitable_figsize_kwargs = {'nrows': 3}
         fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
         angle_kwargs_list = []
-        distance_kwargs_list = []
+        angle_3D_kwargs_list = []
         for title, ax in ax_dict.items():
             angle_kwargs_list.append({'ax': ax[0], 'dim': '2D'})
-            distance_kwargs_list.append({'ax': ax[1], 'data_or_model': 'data', 'dim': '2D', 'linregress': True})
+            angle_3D_kwargs_list.append({'ax': ax[1:], 'dim': '3D'})
         self.multi_visualizer.multi_ax_plot_by_single_visualizer('data_uniform_angle_distribution', angle_kwargs_list)
-        self.multi_visualizer.multi_ax_plot_by_single_visualizer('distance_distribution', distance_kwargs_list)
+        self.multi_visualizer.multi_ax_plot_by_single_visualizer('data_model_angle_distribution', angle_3D_kwargs_list)
+
         for title, ax in ax_dict.items():
-            ax[1].set_title('')
-        # self.multi_visualizer.add_tag()
-        ax_list_in_order = []
-        for title, ax in ax_dict.items():
-            ax_list_in_order.append(ax[0])
-        cf.add_axes_list_tag_by_order(ax_list_in_order)
+            cf.plt_bar(ax[1], [0], [0], label='Data', color=DATA_COLOR)
+            cf.set_ax(ax[1], legend_loc='lower left', bbox_to_anchor=(0, 1.4))
+            cf.plt_bar(ax[2], [0], [0], label='Model', color=MODEL_COLOR)
+            cf.set_ax(ax[2], legend_loc='lower left', bbox_to_anchor=(0, 1.4))
+            break
+
+        self.multi_visualizer.add_tag(row_first=False, ref_ax=ax_dict[cf.cat(self.animal_list[0], self.dataset_key_list[0])][0])
         self.multi_visualizer.add_subfig_title()
         self.multi_visualizer.rm_redundant_xylabel()
         self.multi_visualizer.save_fig(self.figdir+'/fig_3')
@@ -3377,15 +3447,16 @@ class PaperFig:
         ax_dict['c'] = axes[2]
 
         ax = ax_dict['a']
+        visualize_scaling_law(ax, self.multi_visualizer.single_visualizer_list, dim='2D')
+
+        ax = ax_dict['b']
+        visualize_longrange_proportion_correlation_heatmap(ax, self.multi_visualizer.single_visualizer_list, dim='2D')
+
+        ax = ax_dict['c']
         macaque_performance_dict = self.multi_visualizer.get_single_visualizer('macaque_markov40').axon_growth_model.get_area_level_correlation()
         marmoset_performance_dict = self.multi_visualizer.get_single_visualizer('marmoset_majka').axon_growth_model.get_area_level_correlation()
         visualize_macaque_marmoset_performance_similarity(ax, macaque_performance_dict, marmoset_performance_dict)
 
-        ax = ax_dict['b']
-        visualize_scaling_law(ax, self.multi_visualizer.single_visualizer_list, dim='2D')
-
-        ax = ax_dict['c']
-        visualize_longrange_proportion_correlation_heatmap(ax, self.multi_visualizer.single_visualizer_list, dim='2D')
         cf.add_axes_dict_tag(axes_dict=ax_dict, ref_ax=axes[0])
 
         cf.save_fig(fig, self.figdir+'/fig_7', **self.save_fig_kwargs)
@@ -3424,52 +3495,50 @@ class PaperFig:
         cf.save_fig(fig, self.figdir+'/fig_8', **self.save_fig_kwargs)
 
     def SI_fig_1(self):
-        '''
-        accuracy in category & correlation
-        '''
-        performance_dict = {}
-        for single_visualizer in self.multi_visualizer.single_visualizer_list:
-            animal = single_visualizer.animal
-            dataset_key = single_visualizer.dataset_key
-            animal_and_dataset_key = single_visualizer.animal_info.animal_and_dataset_key
-            performance_dict[animal_and_dataset_key] = get_performance_dict(SC_data=single_visualizer.SC_data, SC_model=single_visualizer.SC_model_masked, animal=animal, dataset_key=dataset_key, diagonal=False)
-
-        fig, ax = cf.get_fig_ax(ncols=len(self.animal_list), ax_width=cf.AX_WIDTH*0.8)
-        ax = cf.merge_ax(ax)
-        cf.plt_group_bar_dict(ax, performance_dict, width=0.05)
-        cf.set_ax(ax, xtick=range(len(self.animal_list)), xtick_label=self.animal_list, ylim=[0, 1], legend_kwargs={'ncols': 3}, legend_loc='lower left', bbox_to_anchor=(0, 1))
-
-        cf.save_fig(fig, self.figdir+'/SI_fig_1', **self.save_fig_kwargs)
+        get_ax_kwargs = {'nrows': 1}
+        get_suitable_figsize_kwargs = {'nrows': 1}
+        fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
+        angle_distance_independence_with_distance_threshold_kwargs_list = []
+        for title, ax in ax_dict.items():
+            distance_threshold_list = np.linspace(0, np.nanmax(self.multi_visualizer.get_single_visualizer(title).animal_info.distance_2D.values), 20)
+            angle_distance_independence_with_distance_threshold_kwargs_list.append({'ax': ax, 'distance_threshold_list': distance_threshold_list})
+        self.multi_visualizer.multi_ax_plot_by_single_visualizer('angle_distance_independence_with_distance_threshold', angle_distance_independence_with_distance_threshold_kwargs_list)
+        self.multi_visualizer.add_tag()
+        self.multi_visualizer.add_subfig_title()
+        self.multi_visualizer.rm_redundant_xylabel()
+        self.multi_visualizer.save_fig(self.figdir+'/SI_fig_1')
 
     def SI_fig_2(self):
         '''
         2D & 3D distance
+        2D EDR
         '''
-        get_ax_kwargs = {'nrows': 1}
-        get_suitable_figsize_kwargs = {'nrows': 1}
+        get_ax_kwargs = {'nrows': 2}
+        get_suitable_figsize_kwargs = {'nrows': 2}
         fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
         twoD_threeD_distance_scatter_kwargs_list = []
+        distance_kwargs_list = []
         for title, ax in ax_dict.items():
-            twoD_threeD_distance_scatter_kwargs_list.append({'ax': ax})
+            twoD_threeD_distance_scatter_kwargs_list.append({'ax': ax[0]})
+            distance_kwargs_list.append({'ax': ax[1], 'data_or_model': 'data', 'dim': '2D', 'linregress': True})
         self.multi_visualizer.multi_ax_plot_by_single_visualizer('twoD_threeD_distance_scatter', twoD_threeD_distance_scatter_kwargs_list)
+        self.multi_visualizer.multi_ax_plot_by_single_visualizer('distance_distribution', distance_kwargs_list)
         self.multi_visualizer.add_tag()
         self.multi_visualizer.add_subfig_title()
         self.multi_visualizer.rm_redundant_xylabel()
         self.multi_visualizer.save_fig(self.figdir+'/SI_fig_2')
 
     def SI_fig_3(self):
-        '''
-        3D angle distribution, data & model
-        '''
-        get_ax_kwargs = {'nrows': 2}
-        get_suitable_figsize_kwargs = {'nrows': 2}
+        get_ax_kwargs = {'nrows': 1}
+        get_suitable_figsize_kwargs = {'nrows': 1}
         fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
-        data_model_angle_distribution_kwarg_list = []
+        data_anlge_uniform_index_with_distance_threshold_kwargs_list = []
         for title, ax in ax_dict.items():
-            data_model_angle_distribution_kwarg_list.append({'ax': ax, 'dim': '3D'})
-        self.multi_visualizer.multi_ax_plot_by_single_visualizer('data_model_angle_distribution', data_model_angle_distribution_kwarg_list)
+            distance_threshold_list = np.linspace(0, np.nanmax(self.multi_visualizer.get_single_visualizer(title).animal_info.distance_2D.values), 20)
+            data_anlge_uniform_index_with_distance_threshold_kwargs_list.append({'ax': ax, 'distance_threshold_list': distance_threshold_list})
+        self.multi_visualizer.multi_ax_plot_by_single_visualizer('data_anlge_uniform_index_with_distance_threshold', data_anlge_uniform_index_with_distance_threshold_kwargs_list)
         self.multi_visualizer.add_tag()
-        self.multi_visualizer.add_subfig_title(y=1.0)
+        self.multi_visualizer.add_subfig_title()
         self.multi_visualizer.rm_redundant_xylabel()
         self.multi_visualizer.save_fig(self.figdir+'/SI_fig_3')
 
@@ -3489,18 +3558,22 @@ class PaperFig:
         self.multi_visualizer.rm_redundant_xylabel()
         self.multi_visualizer.save_fig(self.figdir+'/SI_fig_4')
 
-    def SI_fig_5(self, marmoset_V4_timedir):
+    def SI_fig_5(self):
         '''
-        marmoset_V4 connection matrix, UAR
+        marmoset_V4 connection matrix , also compare with majka
         '''
-        marmoset_V4_visualizer = SingleCaseVisualizer('marmoset', 'V4', marmoset_V4_timedir)
-        
-        fig, axes = cf.get_fig_ax(nrows=1, ncols=3)
-        
-        marmoset_V4_visualizer.data_model_SC(ax_data=axes[0], ax_model=axes[1])
-        marmoset_V4_visualizer.data_uniform_angle_distribution(ax=axes[2], dim='2D')
+        marmoset_majka_visualizer = self.multi_visualizer.get_single_visualizer('marmoset_majka')
+        marmoset_V4_visualizer = SingleCaseVisualizer('marmoset', 'V4', self.marmoset_V4_timedir)
 
-        cf.add_axes_list_tag_by_order(axes)
+        fig, axes = cf.get_fig_ax(nrows=2, ncols=2)
+        
+        marmoset_majka_visualizer.data_model_SC(ax_data=axes[0, 0], ax_model=axes[1, 0])
+        marmoset_V4_visualizer.data_model_SC(ax_data=axes[0, 1], ax_model=axes[1, 1])
+
+        cf.add_axes_title(axes[:, 0], title='Paxinos', title_size=cf.SUP_TITLE_SIZE)
+        cf.add_axes_title(axes[:, 1], title='MBM V4', title_size=cf.SUP_TITLE_SIZE)
+
+        cf.add_axes_list_tag_by_order(axes.flatten().tolist())
         cf.save_fig(fig, self.figdir+'/SI_fig_5', **self.save_fig_kwargs)
 
     def SI_fig_6(self):
@@ -3558,25 +3631,7 @@ class PaperFig:
         local_multi_visualizer.save_fig(self.figdir+'/SI_fig_7')
 
     def SI_fig_8(self):
-        '''
-        para search, lambda and correlation relation
-        '''
-        performance_dict = cf.load_dict('../../results/optimal_params/performance_dict')
-        
-        get_ax_kwargs = {'nrows': 1}
-        get_suitable_figsize_kwargs = {'nrows': 1}
-        fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
-        
-        for animal, dataset_key in zip(self.animal_list, self.dataset_key_list):
-            ax = ax_dict[cf.cat(animal, dataset_key)]
-            x, y_mean, y_std = cf.get_sorted_keys_and_mean_variance_arrays_from_dict_of_list(performance_dict[cf.cat(animal, dataset_key)])
-            cf.plt_band_line(ax, x, y_mean, y_std)
-            cf.set_ax(ax, xlabel='Lambda', ylabel='Correlation')
-        
-        self.multi_visualizer.add_tag()
-        self.multi_visualizer.add_subfig_title()
-        self.multi_visualizer.rm_redundant_xylabel()
-        self.multi_visualizer.save_fig(self.figdir+'/SI_fig_8')
+        pass
 
     def SI_fig_9(self):
         '''
