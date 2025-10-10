@@ -2113,7 +2113,7 @@ def get_performance_dict(SC_data, SC_model, animal, dataset_key, diagonal=False)
     performance_dict = {}
     performance_dict['correlation'] = data_model_correlation(SC_data=SC_data, SC_model=SC_model, animal=animal, dataset_key=dataset_key, diagonal=diagonal)
     mask_dict = get_weight_category_mask(animal=animal, dataset_key=dataset_key, diagonal=diagonal)
-    for k in ['all', 'strong', 'medium_strong', 'weak_medium', 'weak']:
+    for k in ['all', 'non', 'both', 'strong', 'medium_strong', 'weak_medium', 'weak']:
         performance_dict[cf.cat('accuracy', k)] = 1 - data_model_RMAE_masked(SC_data=SC_data, SC_model=SC_model, animal=animal, dataset_key=dataset_key, mask=mask_dict[k], diagonal=diagonal)
     return performance_dict
 
@@ -2455,6 +2455,12 @@ def show_value_on_flatmap(ax, animal, dataset_key, value_dict, cmap, cbar_label=
 
     ax.axis('off')
     ax.axis('equal')
+    whole_cortex_coords = animal_info.whole_cortex_coords
+    xlim = [np.min(whole_cortex_coords[:, 0]), np.max(whole_cortex_coords[:, 0])]
+    ylim = [np.min(whole_cortex_coords[:, 1]), np.max(whole_cortex_coords[:, 1])]
+    new_xlim, new_ylim = cf.get_xylim_by_aspect_ratio(xlim, ylim)
+    ax.set_xlim(new_xlim)
+    ax.set_ylim(new_ylim)
 
 
 def show_area_boundary(ax, animal, dataset_key, show_area_name=False, text_fontsize=cf.FONT_SIZE/3, edgecolor=cf.BLACK):
@@ -2623,7 +2629,7 @@ def visualize_data_uniform_distribution_repeated_by_SC(ax, some_property, SC_dat
     uniform_data = np.random.uniform(low=np.min(repeated_property_data), high=np.max(repeated_property_data), size=len(repeated_property_data))
     distribution_kwargs = cf.update_dict({}, distribution_kwargs)
     if distribution_type == 'CDF':
-        cf.plt_compare_cdf_ks(ax, data1=repeated_property_data, data2=uniform_data, color1=DATA_COLOR, color2=cf.BLACK, label1='data', label2='uniform', **distribution_kwargs)
+        cf.plt_compare_cdf_ks(ax, data1=uniform_data, data2=repeated_property_data, color1=cf.BLACK, color2=DATA_COLOR, label1='uniform', label2='data', fontsize=cf.TITLE_SIZE, cdf_kwargs={'linewidth': 1.5*cf.LINE_WIDTH}, **distribution_kwargs)
     elif distribution_type == 'hist':
         pass
 
@@ -2641,7 +2647,15 @@ def visualize_macaque_marmoset_performance_similarity(ax, macaque_performance_di
 
     x = list(insect_transformed_combined_macaque_performance_dict.values())
     y = list(insect_combined_marmoset_performance_dict.values())
-    cf.plt_linregress(ax, x, y, show_list=['p', 'r'], scatter_kwargs={'s': 50.})
+    cf.plt_linregress(ax, x, y, show_list=['p', 'r'], scatter_kwargs={'s': 70.})
+    
+    right_move_x_dict = insect_combined_marmoset_performance_dict.copy()
+    for key in right_move_x_dict.keys():
+        right_move_x_dict[key] += 0.02
+    
+    text_obj_list = cf.add_multi_text_by_dict(ax, insect_transformed_combined_macaque_performance_dict, insect_combined_marmoset_performance_dict, transform='data', fontsize=cf.FONT_SIZE, ha='left', va='bottom')
+    cf.auto_adjust_text(ax, text_obj_list, add_arrow=False)
+
     cf.set_ax(ax, xlabel='Performance (macaque)', ylabel='Performance (marmoset)')
 
 
@@ -2825,7 +2839,7 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
 
             bin_num = self.bin_num
             angle_heatmap, *args = cf.get_hist_2d(azim_value, elev_value, bin_num, bin_num)
-            cf.sns_marginal_heatmap(ax, angle_heatmap, outside=False, heatmap_kwargs=dict(cmap=cf.get_cmap([cf.WHITE, color]), show_xtick=False, show_ytick=False, vmax=0.02), x_color=color, y_color=color)
+            cf.sns_marginal_heatmap(ax, angle_heatmap, outside=False, heatmap_kwargs=dict(cmap=cf.get_cmap([cf.WHITE, color]), show_xtick=False, show_ytick=False, vmax=0.02, cbar_kwargs=dict(add_geq=True)), x_color=color, y_color=color)
             cf.set_ax(ax, xlabel='Azimuth', ylabel='Elevation', title=data_or_model)
             return angle_heatmap
 
@@ -2950,7 +2964,8 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         ss_corresponding = ss[in_circle_index]
         
         cf.plt_scatter(ax, ss_corresponding[:, 0], ss_corresponding[:, 1], color=cf.BLACK, label='source neuron', s=5)
-        show_whole_cortex_boundary(ax, animal=self.animal, dataset_key=self.dataset_key, edgecolor=cf.BLACK)
+        # show_whole_cortex_boundary(ax, animal=self.animal, dataset_key=self.dataset_key, edgecolor=cf.BLACK)
+        show_area_boundary(ax, animal=self.animal, dataset_key=self.dataset_key, show_area_name=False, edgecolor=cf.BLACK)
 
         cf.add_circle_patch(ax, center=pos, radius=radius, edgecolor=cf.WHITE, facecolor=cf.WHITE)
 
@@ -3045,7 +3060,9 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         x = [deviation_rate_dict[area] for area in performance_dict.keys()]
         y = [performance_dict[area] for area in performance_dict.keys()]
         cf.plt_linregress(ax, x, y, show_list=['p', 'r'], text_kwargs={'text_x': 0.1, 'text_y': 0.1})
-        cf.set_ax(ax, xlabel='Injection deviation rate', ylabel=performance_metric)
+        text_obj_list = cf.add_multi_text_by_dict(ax, deviation_rate_dict, performance_dict, transform='data', fontsize=cf.FONT_SIZE*0.8, ha='left', va='bottom')
+        cf.auto_adjust_text(ax, text_obj_list, add_arrow=True)
+        cf.set_ax(ax, xlabel='Injection deviation level', ylabel=performance_metric)
 
     def direction_preference_performance_scatter(self, ax, performance_metric='correlation', mode='uniform', diagonal=False):
         if performance_metric == 'correlation':
@@ -3053,7 +3070,8 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
                 SCt_data = self.animal_info.SCt_data
                 SCt_model_masked = self.axon_growth_model.SC_model_dict[SC_type_to_SC_dict_key_include_diagonal(self.animal_info.SC_type)]
                 performance_dict = area_level_correlation(SC_data=SCt_data, SC_model=SCt_model_masked, animal=self.animal, dataset_key=self.dataset_key, diagonal=True)
-                direction_preference_dict = get_direction_preference(SCt_data, self.animal, self.dataset_key, mode=mode, SC_model=SCt_model_masked)
+                # direction_preference_dict = get_direction_preference(SCt_data, self.animal, self.dataset_key, mode=mode, SC_model=SCt_model_masked)
+                direction_preference_dict = get_direction_preference(self.SC_data, self.animal, self.dataset_key, mode=mode, SC_model=self.SC_model_masked)
             else:
                 performance_dict = area_level_correlation(SC_data=self.SC_data, SC_model=self.SC_model_masked, animal=self.animal, dataset_key=self.dataset_key, diagonal=False)
                 direction_preference_dict = get_direction_preference(self.SC_data, self.animal, self.dataset_key, mode=mode, SC_model=self.SC_model_masked)
@@ -3271,11 +3289,25 @@ class PaperFig:
             animal_and_dataset_key = single_visualizer.animal_info.animal_and_dataset_key
             performance_dict[animal_and_dataset_key] = get_performance_dict(SC_data=single_visualizer.SC_data, SC_model=single_visualizer.SC_model_masked, animal=animal, dataset_key=dataset_key, diagonal=False)
             processed_performance_dict[animal_and_dataset_key] = performance_dict[animal_and_dataset_key].copy()
+            processed_performance_dict[animal_and_dataset_key].pop('correlation', None) # not show in Fig, but shown in main text
             processed_performance_dict[animal_and_dataset_key].pop('accuracy_all', None) # not show in Fig, but shown in main text
+            processed_performance_dict[animal_and_dataset_key].pop('accuracy_non', None) # not show in Fig, but shown in main text
+            processed_performance_dict[animal_and_dataset_key].pop('accuracy_both', None) # not show in Fig, but shown in main text
 
+        # 重命名,去掉所有accuracy前缀
+        for animal_and_dataset_key in processed_performance_dict.keys():
+            new_dict = {}
+            for key, value in processed_performance_dict[animal_and_dataset_key].items():
+                if key.startswith('accuracy_'):
+                    new_key = key.replace('accuracy_', '')
+                else:
+                    new_key = key
+                new_dict[new_key] = value
+            processed_performance_dict[animal_and_dataset_key] = new_dict
+        
         ax = merged_ax
         cf.plt_group_bar_dict(ax, processed_performance_dict, width=0.05)
-        cf.set_ax(ax, xtick=range(len(self.animal_list)), xtick_label=self.animal_list, ylim=[0, 1], legend_kwargs={'ncols': 6}, legend_loc='lower right', bbox_to_anchor=(1, 1), xtick_size=cf.TITLE_SIZE, adjust_tick_size=False)
+        cf.set_ax(ax, xtick=range(len(self.animal_list)), xtick_label=self.animal_list, ylim=[0, 1], legend_kwargs={'ncols': 6}, legend_loc='lower right', bbox_to_anchor=(1, 1), xtick_size=cf.TITLE_SIZE*1.2, adjust_tick_size=False, legend_size=cf.TITLE_SIZE, ylabel='Performance', label_size=cf.TITLE_SIZE*1.2, ytick_size=cf.LABEL_SIZE)
 
         axes_list_in_order = []
         for i in range(self.animal_num):
@@ -3285,6 +3317,17 @@ class PaperFig:
 
         cf.save_fig(fig, self.figdir+'/fig_2', **self.save_fig_kwargs)
         cf.save_dict(performance_dict, self.figdir+'/fig_2_performance_dict')
+
+        RMAE_dict = copy.deepcopy(performance_dict)
+        for animal_and_dataset_key, d in performance_dict.items():
+            for k, v in d.items():
+                if k.startswith('accuracy_'):
+                    new_k = k.replace('accuracy_', 'RMAE_')
+                    RMAE_dict[animal_and_dataset_key][new_k] = 1 - v
+                    RMAE_dict[animal_and_dataset_key].pop(k)
+                else:
+                    pass
+        cf.save_dict(RMAE_dict, self.figdir+'/fig_2_RMAE_dict')
 
     def fig_3(self):
         '''
@@ -3370,7 +3413,12 @@ class PaperFig:
         animal_info = AnimalInfo(animal, dataset_key)
         single_visualizer = self.multi_visualizer.get_single_visualizer(cf.cat(animal, dataset_key))
 
-        fig, ax = cf.get_fig_ax(nrows=2, ncols=4)
+        margin = cf.MARGIN
+        margin['left'] -= 0.05
+        margin['right'] += 0.05
+        margin['top'] += 0.05
+        margin['bottom'] -= 0.05
+        fig, ax = cf.get_fig_ax(nrows=2, ncols=4, margin=margin)
 
         ax_dict = {}
         ax_dict['a'] = cf.merge_ax(ax[0, 0:2])
@@ -3379,6 +3427,11 @@ class PaperFig:
         ax_dict['d'] = cf.merge_ax(ax[0, 3])
         ax_dict['e'] = cf.merge_ax(ax[1, 2])
         ax_dict['f'] = cf.merge_ax(ax[1, 3])
+        for k, v in ax_dict.items():
+            if k in ['a', 'b']:
+                cf.move_ax(v, d_right=-0.1, keep_size=False)
+            else:
+                cf.move_ax(v, d_left=0.1, keep_size=True)
 
         cf.add_axes_dict_tag(axes_dict=ax_dict, ref_ax=ax[0, 0])
 
@@ -3391,7 +3444,7 @@ class PaperFig:
         cf.set_ax(ax, ylabel='Correlation (FLNt)', ylim=[-0.2, 1.2], xtick_rotation=90)
 
         ax = ax_dict['c']
-        single_visualizer.connection_on_flatmap(ax, data_or_model='data', which_area='A1-2')
+        single_visualizer.connection_on_flatmap(ax, data_or_model='data', which_area='A1-2', show_value_on_flatmap_kwargs={'cbar': False})
 
         ax = ax_dict['d']
         single_visualizer.connection_on_flatmap(ax, data_or_model='model', which_area='A1-2')
@@ -3400,8 +3453,10 @@ class PaperFig:
         radius = 0.4
         
         ax = ax_dict['e']
+        # CJ173-FB
         cf.rm_ax_axis(ax)
-        show_whole_cortex_boundary(ax, animal=animal, dataset_key=dataset_key, edgecolor=cf.BLACK)
+        # show_whole_cortex_boundary(ax, animal=animal, dataset_key=dataset_key, edgecolor=cf.BLACK)
+        show_area_boundary(ax, animal=animal, dataset_key=dataset_key, show_area_name=False, edgecolor=cf.BLACK)
 
         cf.add_circle_patch(ax, center=pos, radius=radius, edgecolor=cf.RED, facecolor=cf.RED)
 
@@ -3475,12 +3530,15 @@ class PaperFig:
         ax_dict['c'] = axes[2]
 
         ax = ax_dict['a']
-        single_visualizer.direction_preference_performance_scatter(ax, performance_metric='correlation', mode='uniform', diagonal=False)
+        # single_visualizer.direction_preference_performance_scatter(ax, performance_metric='correlation', mode='uniform', diagonal=False)
+        single_visualizer.direction_preference_performance_scatter(ax, performance_metric='correlation', mode='uniform', diagonal=True)
         cf.move_ax(ax, d_right=0.06, keep_size=True)
 
         ax = ax_dict['b']
-        which_area = 'A19M'
+        # which_area = 'A19M'
+        which_area = 'TPO'
         single_visualizer.connection_on_flatmap(ax, data_or_model='data', which_area=which_area)
+        cf.add_text(ax, text=which_area, x=0.5, y=-0.15, ha='center', va='center', fontsize=cf.LABEL_SIZE)
 
         injection_site = single_visualizer.animal_info.injection_site_2D
         injection_x = injection_site[which_area][0][0]
