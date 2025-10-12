@@ -2426,7 +2426,7 @@ def multiple_injection_difference_ratio():
 
 
 # region visualization
-def show_value_on_flatmap(ax, animal, dataset_key, value_dict, cmap, cbar_label='', target=None, source=None, show_area_name=False, text_fontsize=cf.FONT_SIZE/3, norm_mode='linear', vmin=None, vmax=None, norm_kwargs=None, edgecolor=cf.BLACK, cbar=True, cbar_position=None, fill=True, adjust_lim=True, polygon_kwargs=None, cbar_kwargs=None):
+def show_value_on_flatmap(ax, animal, dataset_key, value_dict, cmap, cbar_label='', target=None, source=None, show_area_name=False, text_fontsize=cf.FONT_SIZE/3, norm_mode='linear', vmin=None, vmax=None, norm_kwargs=None, edgecolor=cf.BLACK, cbar=True, cbar_position=None, fill=True, adjust_lim=True, polygon_kwargs=None, cbar_kwargs=None, set_xylim=True):
     '''
     在flatmap上显示value_dict的值,有两种使用方式,指定某个target或者source以specific_color显示,其余值用cmap显示,如果不指定target和source,则所有值用cmap显示
     '''
@@ -2455,25 +2455,26 @@ def show_value_on_flatmap(ax, animal, dataset_key, value_dict, cmap, cbar_label=
 
     ax.axis('off')
     ax.axis('equal')
-    whole_cortex_coords = animal_info.whole_cortex_coords
-    xlim = [np.min(whole_cortex_coords[:, 0]), np.max(whole_cortex_coords[:, 0])]
-    ylim = [np.min(whole_cortex_coords[:, 1]), np.max(whole_cortex_coords[:, 1])]
-    new_xlim, new_ylim = cf.get_xylim_by_aspect_ratio(xlim, ylim)
-    ax.set_xlim(new_xlim)
-    ax.set_ylim(new_ylim)
+    if set_xylim:
+        whole_cortex_coords = animal_info.whole_cortex_coords
+        xlim = [np.min(whole_cortex_coords[:, 0]), np.max(whole_cortex_coords[:, 0])]
+        ylim = [np.min(whole_cortex_coords[:, 1]), np.max(whole_cortex_coords[:, 1])]
+        new_xlim, new_ylim = cf.get_xylim_by_aspect_ratio(xlim, ylim)
+        ax.set_xlim(new_xlim)
+        ax.set_ylim(new_ylim)
 
 
-def show_area_boundary(ax, animal, dataset_key, show_area_name=False, text_fontsize=cf.FONT_SIZE/3, edgecolor=cf.BLACK):
+def show_area_boundary(ax, animal, dataset_key, show_area_name=False, text_fontsize=cf.FONT_SIZE/3, edgecolor=cf.BLACK, set_xylim=True):
     '''
     在flatmap上画出脑区边界
     '''
     animal_info = AnimalInfo(animal, dataset_key)
     value_dict = {area: 0 for area in animal_info.full_name}
     cmap = cf.get_cmap([cf.TRANSPARENT])
-    show_value_on_flatmap(ax, animal, dataset_key, value_dict=value_dict, show_area_name=show_area_name, text_fontsize=text_fontsize, edgecolor=edgecolor, fill=False, cbar=False, cmap=cmap)
+    show_value_on_flatmap(ax, animal, dataset_key, value_dict=value_dict, show_area_name=show_area_name, text_fontsize=text_fontsize, edgecolor=edgecolor, fill=False, cbar=False, cmap=cmap, set_xylim=set_xylim)
 
 
-def show_whole_cortex_boundary(ax, animal, dataset_key, edgecolor=cf.BLACK):
+def show_whole_cortex_boundary(ax, animal, dataset_key, edgecolor=cf.BLACK, set_xylim=True):
     animal_info = AnimalInfo(animal, dataset_key)
     whole_cortex_coords = animal_info.whole_cortex_coords
     
@@ -2481,11 +2482,12 @@ def show_whole_cortex_boundary(ax, animal, dataset_key, edgecolor=cf.BLACK):
 
     ax.axis('off')
     ax.axis('equal')
-    xlim = [np.min(whole_cortex_coords[:, 0]), np.max(whole_cortex_coords[:, 0])]
-    ylim = [np.min(whole_cortex_coords[:, 1]), np.max(whole_cortex_coords[:, 1])]
-    new_xlim, new_ylim = cf.get_xylim_by_aspect_ratio(xlim, ylim)
-    ax.set_xlim(new_xlim)
-    ax.set_ylim(new_ylim)
+    if set_xylim:
+        xlim = [np.min(whole_cortex_coords[:, 0]), np.max(whole_cortex_coords[:, 0])]
+        ylim = [np.min(whole_cortex_coords[:, 1]), np.max(whole_cortex_coords[:, 1])]
+        new_xlim, new_ylim = cf.get_xylim_by_aspect_ratio(xlim, ylim)
+        ax.set_xlim(new_xlim)
+        ax.set_ylim(new_ylim)
 
 
 def draw_rectangle_for_connection_matrix(ax, animal, dataset_key):
@@ -2816,7 +2818,7 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
             regress_dict['$\Lambda$'] = -1 / (regress_dict['slope'] * np.log(10)) # transform to e base to get lambda
             unit_dict = cf.create_dict(keys=regress_dict.keys(), default_value=None)
             unit_dict['$\Lambda$'] = 'mm'
-            cf.add_text_by_dict(ax, regress_dict, show_list=['p', '$\Lambda$'], unit_dict=unit_dict, text_x=0.6, text_y=0.9)
+            cf.add_text_by_dict(ax, regress_dict, show_list=['p', '$\Lambda$'], unit_dict=unit_dict, text_x=0.45, text_y=0.9, fontsize=cf.LABEL_SIZE*0.75)
         cf.set_ax(ax, xlabel=f'Distance {dim} (mm)', ylog=True, title=data_or_model)
 
     def angle_distribution(self, ax, data_or_model, dim='2D', distribution_kwargs=None):
@@ -2915,7 +2917,7 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
             x = range(len(target_name))
             cf.plt_two_side_bar(ax, x, intrinsic_proportion_data_flatten, intrinsic_proportion_model_flatten, color1=DATA_COLOR, color2=MODEL_COLOR, label1='data', label2='model')
             corr = cf.get_corr(intrinsic_proportion_data_flatten, intrinsic_proportion_model_flatten)
-            cf.add_text(ax, text='Corr='+str(round(corr, 3)))
+            cf.add_text(ax, text='Corr='+str(round(corr, 3)), fontsize=cf.LABEL_SIZE)
             cf.set_ax(ax, xlabel='Area', ylabel='Intrinsic proportion', xtick=x, xtick_label=target_name, xtick_rotation=90, ylim=[-1, 1])
 
     def distance_SC_scatter(self, ax, data_or_model, dim='2D'):
@@ -3064,11 +3066,8 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
                 performance_dict = area_level_correlation(SC_data=self.SC_data, SC_model=self.SC_model_masked, animal=self.animal, dataset_key=self.dataset_key, diagonal=False)
         x = [deviation_rate_dict[area] for area in performance_dict.keys()]
         y = [performance_dict[area] for area in performance_dict.keys()]
-        cf.plt_linregress(ax, x, y, show_list=['p', 'r'], text_kwargs={'text_x': 0.1, 'text_y': 0.1})
-        # text_obj_list = cf.add_multi_text_by_dict(ax, deviation_rate_dict, performance_dict, transform='data', fontsize=cf.FONT_SIZE*0.8, ha='left', va='bottom')
-        # cf.auto_adjust_text(ax, text_obj_list, add_arrow=True)
-        # cf.add_text(ax, x=deviation_rate_dict['TPO'], y=performance_dict['TPO'], text='TPO', va='bottom', ha='left', fontsize=cf.FONT_SIZE, transform='data')
-        cf.add_text(ax, x=deviation_rate_dict['A19M'], y=performance_dict['A19M'], text='A19M', va='bottom', ha='left', fontsize=cf.FONT_SIZE, transform='data')
+        cf.plt_linregress(ax, x, y, show_list=['p', 'r'], text_kwargs={'text_x': 0.02, 'text_y': 0.2}, text_size=cf.LABEL_SIZE*0.75)
+        cf.add_text(ax, x=deviation_rate_dict['A19M'], y=performance_dict['A19M'], text='A19M', va='bottom', ha='center', fontsize=cf.LABEL_SIZE*0.75, transform='data')
         cf.set_ax(ax, xlabel='Injection deviation level', ylabel=performance_metric)
 
     def direction_preference_performance_scatter(self, ax, performance_metric='correlation', mode='uniform', diagonal=False):
@@ -3084,7 +3083,7 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
                 direction_preference_dict = get_direction_preference(self.SC_data, self.animal, self.dataset_key, mode=mode, SC_model=self.SC_model_masked)
         x = [direction_preference_dict[area] for area in performance_dict.keys()]
         y = [performance_dict[area] for area in performance_dict.keys()]
-        cf.plt_linregress(ax, x, y, show_list=['p', 'r'], text_kwargs={'text_x': 0.1, 'text_y': 0.1})
+        cf.plt_linregress(ax, x, y, show_list=['p', 'r'], text_kwargs={'text_x': 0.02, 'text_y': 0.2}, text_size=cf.LABEL_SIZE*0.75)
         cf.set_ax(ax, xlabel='Direction preference', ylabel=performance_metric)
 
     def twoD_threeD_distance_scatter(self, ax):
@@ -3093,8 +3092,8 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         reordered_distance_3D = cf.reorder_df(distance_3D, new_row=distance_2D.index, new_col=distance_2D.columns)
         x = reordered_distance_3D.values.flatten()
         y = distance_2D.values.flatten()
-        cf.plt_linregress(ax, x, y, show_list=['r'], scatter_mode='density', scatter_kwargs={'cbar_kwargs': {'ticks': []}})
-        cf.set_ax(ax, xlabel='3D Distance (mm)', ylabel='2D Distance (mm)')
+        cf.plt_linregress(ax, x, y, show_list=['r'], scatter_mode='density', scatter_kwargs={'cbar_kwargs': {'ticks': []}}, text_size=cf.LABEL_SIZE*0.75, text_kwargs={'text_x': 0.05, 'text_y': 1.})
+        cf.set_ax(ax, xlabel='Distance 3D (mm)', ylabel='Distance 2D (mm)')
 
     def angle_distance_scatter(self, ax):
         mask = get_weight_category_mask(self.animal, self.dataset_key, diagonal=False)
@@ -3111,7 +3110,7 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         cf.plt_scatter(ax, distance_list, angle_list)
 
         result = angle_distance_independence_test(angle_list, distance_list, angle_bin_num=self.bin_num, distance_bin_num=self.bin_num)
-        cf.add_text_by_dict(ax, result, text_x=0.8, text_y=1.2, text_kwargs={'transform': ax.transAxes})
+        cf.add_text_by_dict(ax, result, text_x=0.8, text_y=1.2, text_kwargs={'transform': ax.transAxes}, fontsize=cf.LABEL_SIZE*0.75)
 
         cf.set_ax(ax, xlabel='Distance (mm)', ylabel='Angle')
 
@@ -3126,7 +3125,8 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
             distance_list = []
             for r in mask['all'].index:
                 for c in mask['all'].columns:
-                    if mask['all'].loc[r, c] and distance_matrix.loc[r, c] >= distance_threshold:
+                    # if mask['all'].loc[r, c] and distance_matrix.loc[r, c] >= distance_threshold:
+                    if mask['all'].loc[r, c] and distance_matrix.loc[r, c] <= distance_threshold:
                         angle_list.append(angle_matrix.loc[r, c])
                         distance_list.append(distance_matrix.loc[r, c])
             result = angle_distance_independence_test(angle_list, distance_list, angle_bin_num=self.bin_num, distance_bin_num=self.bin_num)
@@ -3141,7 +3141,7 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         # just add a fake line to show legend
         cf.plt_line(ax, x=[0], y=[0], color=cf.ORANGE, label='KL')
         cf.add_vline(ax, x=self.axon_growth_model.get_unique_Lambda() * 5, color=cf.RED, linestyle='--', label='$5\Lambda$')
-        cf.set_ax(ax, xlabel='Distance threshold (mm)', ylabel='JSD', legend_loc='upper left')
+        cf.set_ax(ax, xlabel='Threshold (mm)', ylabel='JSD', legend_loc='upper left')
         cf.set_ax(twin_ax, ylabel='KL', legend=False)
 
     def distance_relative_error(self, ax, dim='2D'):
@@ -3228,7 +3228,7 @@ class PaperFig:
         cf.add_axes_dict_tag(axes_dict=ax_dict, ref_ax=axes[0, 0])
 
         for ax in [ax_dict['a'], ax_dict['b'], ax_dict['c']]:
-            show_area_boundary(ax, animal, dataset_key)
+            show_area_boundary(ax, animal, dataset_key, set_xylim=False)
 
         # colors = cf.get_random_color(n=len(full_name), cmap=cf.HEATMAP_CMAP, seed=3)
         colors = cf.get_plt_color(n=len(full_name))
@@ -3360,7 +3360,7 @@ class PaperFig:
 
         self.multi_visualizer.add_tag(row_first=False, ref_ax=ax_dict[cf.cat(self.animal_list[0], self.dataset_key_list[0])][0])
         self.multi_visualizer.add_subfig_title()
-        self.multi_visualizer.rm_redundant_xylabel()
+        # self.multi_visualizer.rm_redundant_xylabel()
         self.multi_visualizer.save_fig(self.figdir+'/fig_3')
 
     def fig_4(self):
@@ -3393,21 +3393,21 @@ class PaperFig:
 
         ax = ax_dict['c']
         single_visualizer.SC_distribution(ax, data_or_model='model', log_scale=True)
-        ax.set_ylabel('')
+        # ax.set_ylabel('')
 
         ax = ax_dict['d']
         single_visualizer.distance_SC_scatter(ax, data_or_model='data', dim='2D')
 
         ax = ax_dict['e']
         single_visualizer.distance_SC_scatter(ax, data_or_model='model', dim='2D')
-        ax.set_ylabel('')
+        # ax.set_ylabel('')
 
         ax = ax_dict['f']
         single_visualizer.distance_distribution(ax, data_or_model='data', dim='2D')
 
         ax = ax_dict['g']
         single_visualizer.distance_distribution(ax, data_or_model='model', dim='2D')
-        ax.set_ylabel('')
+        # ax.set_ylabel('')
 
         cf.save_fig(fig, self.figdir+'/fig_4', **self.save_fig_kwargs)
 
@@ -3498,8 +3498,8 @@ class PaperFig:
         for title, ax in ax_dict.items():
             ax[1].set_xlim(ax[0].get_xlim())
         self.multi_visualizer.add_tag(row_first=False)
-        self.multi_visualizer.add_subfig_title()
-        self.multi_visualizer.rm_redundant_xylabel()
+        self.multi_visualizer.add_subfig_title(y=1.05)
+        # self.multi_visualizer.rm_redundant_xylabel()
         self.multi_visualizer.save_fig(self.figdir+'/fig_6')
 
     def fig_7(self):
@@ -3566,20 +3566,6 @@ class PaperFig:
         cf.save_fig(fig, self.figdir+'/fig_8', **self.save_fig_kwargs)
 
     def SI_fig_1(self):
-        get_ax_kwargs = {'nrows': 1}
-        get_suitable_figsize_kwargs = {'nrows': 1}
-        fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
-        angle_distance_independence_with_distance_threshold_kwargs_list = []
-        for title, ax in ax_dict.items():
-            distance_threshold_list = np.linspace(0, np.nanmax(self.multi_visualizer.get_single_visualizer(title).animal_info.distance_2D.values), 20)
-            angle_distance_independence_with_distance_threshold_kwargs_list.append({'ax': ax, 'distance_threshold_list': distance_threshold_list})
-        self.multi_visualizer.multi_ax_plot_by_single_visualizer('angle_distance_independence_with_distance_threshold', angle_distance_independence_with_distance_threshold_kwargs_list)
-        self.multi_visualizer.add_tag()
-        self.multi_visualizer.add_subfig_title()
-        self.multi_visualizer.rm_redundant_xylabel()
-        self.multi_visualizer.save_fig(self.figdir+'/SI_fig_1')
-
-    def SI_fig_2(self):
         '''
         2D & 3D distance
         2D EDR
@@ -3596,25 +3582,10 @@ class PaperFig:
         self.multi_visualizer.multi_ax_plot_by_single_visualizer('distance_distribution', distance_kwargs_list)
         self.multi_visualizer.add_tag()
         self.multi_visualizer.add_subfig_title()
-        self.multi_visualizer.rm_redundant_xylabel()
-        self.multi_visualizer.save_fig(self.figdir+'/SI_fig_2')
-
-    def SI_fig_3(self):
-        pass
-        # get_ax_kwargs = {'nrows': 1}
-        # get_suitable_figsize_kwargs = {'nrows': 1}
-        # fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
-        # data_anlge_uniform_index_with_distance_threshold_kwargs_list = []
-        # for title, ax in ax_dict.items():
-        #     distance_threshold_list = np.linspace(0, np.nanmax(self.multi_visualizer.get_single_visualizer(title).animal_info.distance_2D.values), 40)[:-2]
-        #     data_anlge_uniform_index_with_distance_threshold_kwargs_list.append({'ax': ax, 'distance_threshold_list': distance_threshold_list})
-        # self.multi_visualizer.multi_ax_plot_by_single_visualizer('data_anlge_uniform_index_with_distance_threshold', data_anlge_uniform_index_with_distance_threshold_kwargs_list)
-        # self.multi_visualizer.add_tag()
-        # self.multi_visualizer.add_subfig_title()
         # self.multi_visualizer.rm_redundant_xylabel()
-        # self.multi_visualizer.save_fig(self.figdir+'/SI_fig_3')
+        self.multi_visualizer.save_fig(self.figdir+'/SI_fig_1')
 
-    def SI_fig_4(self):
+    def SI_fig_2(self):
         '''
         angle distance independence
         '''
@@ -3633,10 +3604,10 @@ class PaperFig:
             ax[1].set_xlim(ax[0].get_xlim())
         self.multi_visualizer.add_tag()
         self.multi_visualizer.add_subfig_title()
-        self.multi_visualizer.rm_redundant_xylabel()
-        self.multi_visualizer.save_fig(self.figdir+'/SI_fig_4')
+        # self.multi_visualizer.rm_redundant_xylabel()
+        self.multi_visualizer.save_fig(self.figdir+'/SI_fig_2')
 
-    def SI_fig_5(self):
+    def SI_fig_3(self):
         '''
         marmoset_V4 connection matrix , also compare with majka
         '''
@@ -3652,18 +3623,18 @@ class PaperFig:
         cf.add_axes_title(axes[:, 1], title='MBM V4', title_size=cf.SUP_TITLE_SIZE)
 
         cf.add_axes_list_tag_by_order(axes.flatten().tolist())
-        cf.save_fig(fig, self.figdir+'/SI_fig_5', **self.save_fig_kwargs)
+        cf.save_fig(fig, self.figdir+'/SI_fig_3', **self.save_fig_kwargs)
 
-    def SI_fig_6(self):
+    def SI_fig_4(self):
         '''
         connection statistics, mouse, macaque and human
         '''
         local_multi_visualizer = cf.MultiVisualizerByRow.from_multi_visualizer_instance(self.multi_visualizer)
         with local_multi_visualizer.temporary_disable(['marmoset_majka']):
             margin = cf.MARGIN.copy()
-            margin['top'] -= 0.1
-            get_ax_kwargs = {'nrows': 1, 'ncols': 6, 'margin': margin}
-            get_suitable_figsize_kwargs = {'nrows': 1, 'ncols': 6, 'margin': margin, 'which': 'margin'}
+            # margin['top'] -= 0.1 # 原先横向排版所需
+            get_ax_kwargs = {'nrows': 2, 'ncols': 3, 'margin': margin}
+            get_suitable_figsize_kwargs = {'nrows': 2, 'ncols': 3, 'margin': margin, 'which': 'margin'}
             fig_dict, ax_dict = local_multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
             distance_SC_data_kwargs_list = []
             distance_SC_model_kwargs_list = []
@@ -3672,12 +3643,12 @@ class PaperFig:
             distance_distribution_data_kwargs_list = []
             distance_distribution_model_kwargs_list = []
             for title, ax in ax_dict.items():
-                distance_SC_data_kwargs_list.append({'ax': ax[0], 'data_or_model': 'data', 'dim': '2D'})
-                distance_SC_model_kwargs_list.append({'ax': ax[1], 'data_or_model': 'model', 'dim': '2D'})
-                SC_distribution_data_kwargs_list.append({'ax': ax[2], 'data_or_model': 'data', 'log_scale': True})
-                SC_distribution_model_kwargs_list.append({'ax': ax[3], 'data_or_model': 'model', 'log_scale': True})
-                distance_distribution_data_kwargs_list.append({'ax': ax[4], 'data_or_model': 'data', 'dim': '2D'})
-                distance_distribution_model_kwargs_list.append({'ax': ax[5], 'data_or_model': 'model', 'dim': '2D'})
+                distance_SC_data_kwargs_list.append({'ax': ax[0, 0], 'data_or_model': 'data', 'dim': '2D'})
+                distance_SC_model_kwargs_list.append({'ax': ax[1, 0], 'data_or_model': 'model', 'dim': '2D'})
+                SC_distribution_data_kwargs_list.append({'ax': ax[0, 1], 'data_or_model': 'data', 'log_scale': True})
+                SC_distribution_model_kwargs_list.append({'ax': ax[1, 1], 'data_or_model': 'model', 'log_scale': True})
+                distance_distribution_data_kwargs_list.append({'ax': ax[0, 2], 'data_or_model': 'data', 'dim': '2D'})
+                distance_distribution_model_kwargs_list.append({'ax': ax[1, 2], 'data_or_model': 'model', 'dim': '2D'})
             local_multi_visualizer.multi_ax_plot_by_single_visualizer('distance_SC_scatter', distance_SC_data_kwargs_list)
             local_multi_visualizer.multi_ax_plot_by_single_visualizer('distance_SC_scatter', distance_SC_model_kwargs_list)
             local_multi_visualizer.multi_ax_plot_by_single_visualizer('SC_distribution', SC_distribution_data_kwargs_list)
@@ -3685,49 +3656,39 @@ class PaperFig:
             local_multi_visualizer.multi_ax_plot_by_single_visualizer('distance_distribution', distance_distribution_data_kwargs_list)
             local_multi_visualizer.multi_ax_plot_by_single_visualizer('distance_distribution', distance_distribution_model_kwargs_list)
             local_multi_visualizer.add_tag()
-            local_multi_visualizer.add_subfig_title(y=1.06)
-            local_multi_visualizer.rm_redundant_xylabel()
-            local_multi_visualizer.save_fig(self.figdir+'/SI_fig_6')
+            # local_multi_visualizer.add_subfig_title(y=1.06) # 原先横向排版所需
+            local_multi_visualizer.add_subfig_title(y=1.02)
+            for title, ax in ax_dict.items():
+                cf.reduce_ax_tick(ax[0, 1], axis='y', max_num=4)
+                cf.reduce_ax_tick(ax[1, 1], axis='y', max_num=4)
+            # local_multi_visualizer.rm_redundant_xylabel()
+            local_multi_visualizer.save_fig(self.figdir+'/SI_fig_4')
 
-    def SI_fig_7(self):
+    def SI_fig_5(self):
         '''
         area level correlation, all animals
 
         这里因为要搞成2x2的形式,所以要重新生成一个multi_visualizer
         '''
         local_multi_visualizer = cf.MultiVisualizer.from_multi_visualizer_instance(self.multi_visualizer)
-        get_ax_kwargs = {'nrows': 1}
-        get_suitable_figsize_kwargs = {'nrows': 1, 'ax_width': cf.AX_WIDTH*2}
+        get_ax_kwargs = {'nrows': 1, 'margin': cf.MARGIN.copy().update({'top': 0.8})}
+        get_suitable_figsize_kwargs = {'nrows': 1, 'ax_width': cf.AX_WIDTH*2, 'margin': cf.MARGIN.copy().update({'top': 0.8}), 'which': 'margin'}
         fig_dict, ax_dict = local_multi_visualizer.get_fig_subfig_ax(subfig_ncols=2, subfig_nrows=2, get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
         kwargs_list = []
         for title, ax in ax_dict.items():
             kwargs_list.append({'ax': ax, 'performance_metric': 'correlation', 'sort': True})
         local_multi_visualizer.multi_ax_plot_by_single_visualizer('area_level_performance', kwargs_list)
+        ax = ax_dict['human_lariviere']
+        ticks = ax.get_xticks()
+        labels = ax.get_xticklabels()
+        offsetstep = 5
+        ax.set_xticks(ticks=ticks[::offsetstep], labels=[l.get_text() for l in labels[::offsetstep]], rotation=90, fontsize=cf.TICK_SIZE)
         local_multi_visualizer.add_tag()
         local_multi_visualizer.add_subfig_title()
-        local_multi_visualizer.rm_redundant_xylabel()
-        local_multi_visualizer.save_fig(self.figdir+'/SI_fig_7')
+        # local_multi_visualizer.rm_redundant_xylabel()
+        local_multi_visualizer.save_fig(self.figdir+'/SI_fig_5')
 
-    def SI_fig_8(self):
-        pass
-
-    def SI_fig_9(self):
-        '''
-        direction preference & performance (correlation)
-        '''
-        get_ax_kwargs = {'nrows': 1}
-        get_suitable_figsize_kwargs = {'nrows': 1}
-        fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
-        kwargs_list = []
-        for title, ax in ax_dict.items():
-            kwargs_list.append({'ax': ax, 'performance_metric': 'correlation', 'mode': 'uniform', 'diagonal': False})
-        self.multi_visualizer.multi_ax_plot_by_single_visualizer('direction_preference_performance_scatter', kwargs_list)
-        self.multi_visualizer.add_tag()
-        self.multi_visualizer.add_subfig_title()
-        self.multi_visualizer.rm_redundant_xylabel()
-        self.multi_visualizer.save_fig(self.figdir+'/SI_fig_9')
-
-    def SI_fig_10(self):
+    def SI_fig_6(self):
         '''
         distance & relative error
         '''
@@ -3740,8 +3701,24 @@ class PaperFig:
         self.multi_visualizer.multi_ax_plot_by_single_visualizer('distance_relative_error', kwargs_list)
         self.multi_visualizer.add_tag()
         self.multi_visualizer.add_subfig_title(y=1.05)
-        self.multi_visualizer.rm_redundant_xylabel()
-        self.multi_visualizer.save_fig(self.figdir+'/SI_fig_10')
+        # self.multi_visualizer.rm_redundant_xylabel()
+        self.multi_visualizer.save_fig(self.figdir+'/SI_fig_6')
+
+    def SI_fig_7(self):
+        '''
+        direction preference & performance (correlation)
+        '''
+        get_ax_kwargs = {'nrows': 1}
+        get_suitable_figsize_kwargs = {'nrows': 1}
+        fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
+        kwargs_list = []
+        for title, ax in ax_dict.items():
+            kwargs_list.append({'ax': ax, 'performance_metric': 'correlation', 'mode': 'uniform', 'diagonal': False})
+        self.multi_visualizer.multi_ax_plot_by_single_visualizer('direction_preference_performance_scatter', kwargs_list)
+        self.multi_visualizer.add_tag()
+        self.multi_visualizer.add_subfig_title()
+        # self.multi_visualizer.rm_redundant_xylabel()
+        self.multi_visualizer.save_fig(self.figdir+'/SI_fig_7')
 
     def table_1(self):
         '''
