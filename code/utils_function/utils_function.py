@@ -2481,6 +2481,11 @@ def show_whole_cortex_boundary(ax, animal, dataset_key, edgecolor=cf.BLACK):
 
     ax.axis('off')
     ax.axis('equal')
+    xlim = [np.min(whole_cortex_coords[:, 0]), np.max(whole_cortex_coords[:, 0])]
+    ylim = [np.min(whole_cortex_coords[:, 1]), np.max(whole_cortex_coords[:, 1])]
+    new_xlim, new_ylim = cf.get_xylim_by_aspect_ratio(xlim, ylim)
+    ax.set_xlim(new_xlim)
+    ax.set_ylim(new_ylim)
 
 
 def draw_rectangle_for_connection_matrix(ax, animal, dataset_key):
@@ -3060,8 +3065,10 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         x = [deviation_rate_dict[area] for area in performance_dict.keys()]
         y = [performance_dict[area] for area in performance_dict.keys()]
         cf.plt_linregress(ax, x, y, show_list=['p', 'r'], text_kwargs={'text_x': 0.1, 'text_y': 0.1})
-        text_obj_list = cf.add_multi_text_by_dict(ax, deviation_rate_dict, performance_dict, transform='data', fontsize=cf.FONT_SIZE*0.8, ha='left', va='bottom')
-        cf.auto_adjust_text(ax, text_obj_list, add_arrow=True)
+        # text_obj_list = cf.add_multi_text_by_dict(ax, deviation_rate_dict, performance_dict, transform='data', fontsize=cf.FONT_SIZE*0.8, ha='left', va='bottom')
+        # cf.auto_adjust_text(ax, text_obj_list, add_arrow=True)
+        # cf.add_text(ax, x=deviation_rate_dict['TPO'], y=performance_dict['TPO'], text='TPO', va='bottom', ha='left', fontsize=cf.FONT_SIZE, transform='data')
+        cf.add_text(ax, x=deviation_rate_dict['A19M'], y=performance_dict['A19M'], text='A19M', va='bottom', ha='left', fontsize=cf.FONT_SIZE, transform='data')
         cf.set_ax(ax, xlabel='Injection deviation level', ylabel=performance_metric)
 
     def direction_preference_performance_scatter(self, ax, performance_metric='correlation', mode='uniform', diagonal=False):
@@ -3430,8 +3437,10 @@ class PaperFig:
         for k, v in ax_dict.items():
             if k in ['a', 'b']:
                 cf.move_ax(v, d_right=-0.1, keep_size=False)
-            else:
+            elif k in ['c', 'e']:
                 cf.move_ax(v, d_left=0.1, keep_size=True)
+            elif k in ['d', 'f']:
+                cf.move_ax(v, d_left=0.13, keep_size=True)
 
         cf.add_axes_dict_tag(axes_dict=ax_dict, ref_ax=ax[0, 0])
 
@@ -3464,7 +3473,9 @@ class PaperFig:
         cf.rm_ax_axis(ax)
         single_visualizer.retrograde_neuron_by_pos(ax, pos, radius)
 
-        cf.save_fig(fig, self.figdir+'/fig_5', **self.save_fig_kwargs)
+        local_save_fig_kwargs = self.save_fig_kwargs.copy()
+        local_save_fig_kwargs['bbox_inches'] = 'tight'
+        cf.save_fig(fig, self.figdir+'/fig_5', **local_save_fig_kwargs)
 
     def fig_6(self):
         '''
@@ -3535,8 +3546,8 @@ class PaperFig:
         cf.move_ax(ax, d_right=0.06, keep_size=True)
 
         ax = ax_dict['b']
-        # which_area = 'A19M'
-        which_area = 'TPO'
+        which_area = 'A19M'
+        # which_area = 'TPO'
         single_visualizer.connection_on_flatmap(ax, data_or_model='data', which_area=which_area)
         cf.add_text(ax, text=which_area, x=0.5, y=-0.15, ha='center', va='center', fontsize=cf.LABEL_SIZE)
 
@@ -3545,6 +3556,7 @@ class PaperFig:
         injection_y = injection_site[which_area][0][1]
         cf.plt_scatter(ax, injection_x, injection_y, color=cf.YELLOW, label='Injection site', s=50)
         cf.set_ax(ax, xlim=[injection_x-5, injection_x+5], ylim=[injection_y-5, injection_y+5])
+        # cf.set_ax(ax, xlim=[injection_x-8, injection_x+8], ylim=[injection_y-8, injection_y+8])
 
         ax = ax_dict['c']
         single_visualizer.injection_deviation_rate_performance_scatter(ax, performance_metric='correlation', mode='3D', diagonal=True)
