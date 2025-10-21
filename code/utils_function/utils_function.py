@@ -77,6 +77,7 @@ import shapely.geometry
 import pointpats
 import nibabel as nib
 import SimpleITK as sitk
+from sklearn.feature_selection import mutual_info_regression
 
 # 自定义库
 # sys.path.append(r'/data/zyjin/common_func/')
@@ -171,10 +172,10 @@ def generate_area_center(animal, dataset_key, density=100):
     return area_center_dict
 
 
-def generate_area_center_3D(animal, dataset_key):
+def get_area_voxel_3D(animal, dataset_key):
     animal_info = AnimalInfo(animal, dataset_key)
     full_name = animal_info.full_name
-    area_center_dict = {}
+    area_voxel_dict = {}
     if animal=='mouse' and dataset_key=='gamanut':
         atlas = np.load(animal_info.raw_3D_data_dir+'/modified_data.npy')
         areas = pd.read_excel(animal_info.raw_3D_data_dir+'/areas.xlsx')
@@ -184,8 +185,8 @@ def generate_area_center_3D(animal, dataset_key):
         for brain_area in full_name:
             # 把脑区对应到数字
             s = modified_area_to_index[brain_area]
-            voxels = np.array(np.where(atlas==s))
-            area_center_dict[brain_area] = np.mean(voxels, axis=1)
+            voxels = np.array(np.where(atlas==s)).T * 0.025
+            area_voxel_dict[brain_area] = voxels
     if animal=='marmoset' and dataset_key=='majka':
         def indices_to_mm(repeated_indices, affine):
             return np.array([repeated_indices[:, 0]*(-affine[0, 0])-affine[0, 3], repeated_indices[:, 1]*(-affine[1, 1])-affine[1, 3], repeated_indices[:, 2]*affine[2, 2]+affine[2, 3]]).T
@@ -196,8 +197,8 @@ def generate_area_center_3D(animal, dataset_key):
         for label in np.unique(atlas_label):
             if int(label)!=0:
                 voxel = np.array(np.where(atlas_label==label)).T
-                area_center_dict[area_name.loc[(int(label))-1, 'Area']] = indices_to_mm(np.array([np.mean(voxel, axis=0)]), affine).flatten()
-        area_center_dict.pop('no', None)
+                area_voxel_dict[area_name.loc[(int(label))-1, 'Area']] = indices_to_mm(voxel, affine)
+        area_voxel_dict.pop('no', None)
     if animal=='macaque' and dataset_key in ['markov29', 'markov40']:
         def macaque_voxel_value_to_area_name(voxel_value):
             label_mapping = {0: 'Clear Label', 1: '10', 2: '46d', 3: '46v', 4: '11', 5: '12', 6: '14', 7: '9', 8: '32', 9: '946d', 10: '946v', 11: '24c', 12: '8B', 13: '45A', 14: '13', 15: '25', 16: 'TEMPORAL_POLE', 17: '45B', 18: 'F6', 19: 'F7', 20: '8r', 21: 'ProM', 22: '44', 23: 'F5', 24: '24b', 25: 'OPAI', 26: 'OPRO', 27: 'Gu', 28: '8l', 29: '8m', 30: '24a', 31: 'PERIRHINAL', 32: 'PIRIFORM', 33: 'ENTORHINAL', 34: 'STPr', 35: 'TEama', 36: 'TEav', 37: 'INSULA', 38: 'Pi', 39: 'PBr', 40: 'IPa', 41: 'SII', 42: 'PGa', 43: 'CORE', 44: 'LB', 45: 'MB', 46: '24d', 47: 'TEad', 48: 'F2', 49: 'F3', 50: 'F4', 51: '3', 52: '2', 53: 'F1', 54: 'SUBICULUM', 55: 'TEamp', 56: 'STPi', 57: 'Tepd', 58: 'TEpv', 59: '1', 60: 'THTF', 61: '2930', 62: '23', 63: 'PBc', 64: 'AIP', 65: '7B', 66: 'FST', 67: '5', 68: '7op', 69: 'TEOm', 70: 'TEO', 71: 'STPc', 72: 'VIP', 73: 'V2', 74: 'LIP', 75: 'MST', 76: 'V4', 77: 'V3', 78: 'Pro.St.', 79: '31', 80: '7A', 81: '7m', 82: 'TPt', 83: 'MT', 84: 'V4t', 85: 'MIP', 86: 'V1', 87: 'PIP', 88: 'V3A', 89: 'V6A', 90: 'DP', 91: 'V6'}
@@ -205,11 +206,12 @@ def generate_area_center_3D(animal, dataset_key):
         mha_file_path = animal_info.raw_3D_data_dir+'/91 areas parcellation fitted on M132 MRI/Coronal Parcellation.mha'
         mha_image = sitk.ReadImage(mha_file_path)
         mha_array = sitk.GetArrayFromImage(mha_image)
+        spacing = mha_image.GetSpacing()
         for i in range(1, len(full_name)+1):
             # 从1开始因为0对应的是没有脑子的地方
             brain_area = macaque_voxel_value_to_area_name(i)
-            voxels = np.array(np.where(mha_array==i))
-            area_center_dict[brain_area] = np.mean(voxels, axis=1)
+            voxels = np.array(np.where(mha_array==i)).T
+            area_voxel_dict[brain_area] = voxels * np.array([spacing[2], spacing[1], spacing[0]])
     if animal == 'human' and dataset_key == 'lariviere':
         def number_to_area_name(index, brain_type):
             # 不区分左右脑区,所以把'R_', 'L_'直接去掉
@@ -240,10 +242,18 @@ def generate_area_center_3D(animal, dataset_key):
             mask = (labels == label)
             points_with_label = coord_L[mask]
 
-            # 计算重心坐标
-            centroid = np.mean(points_with_label, axis=0)
-            area_center_dict[number_to_area_name(label, 'L')] = centroid
-        area_center_dict.pop('unknown', None) # 去掉unknown
+            area_voxel_dict[number_to_area_name(label, 'L')] = points_with_label
+        area_voxel_dict.pop('unknown', None)
+    cf.save_dict(area_voxel_dict, animal_info.threeD_data_dir + 'area_voxel_dict_3D')
+    return area_voxel_dict
+
+
+def generate_area_center_3D(animal, dataset_key):
+    animal_info = AnimalInfo(animal, dataset_key)
+    area_voxel_dict = get_area_voxel_3D(animal, dataset_key)
+    area_center_dict = {}
+    for area, voxels in area_voxel_dict.items():
+        area_center_dict[area] = np.mean(voxels, axis=0)
     cf.save_dict(area_center_dict, animal_info.threeD_data_dir + 'area_center_dict_3D')
     return area_center_dict
 
@@ -459,7 +469,7 @@ class AnimalInfo(AnimalDir):
         '''
         super().__init__(animal, dataset_key)
         self.force_re_preprocess = False
-        # self.force_re_preprocess = True
+        self.force_re_preprocess = True
         self._re_preprocess_dict = {} # 运行过的计算,标记为True
 
         SC_type_dict = {'mouse_gamanut': 'FLNe', 'marmoset_majka': 'FLNe', 'marmoset_V4': 'FLNe', 'macaque_markov29': 'FLNe', 'macaque_markov40': 'FLNe', 'human_lariviere': 'Dmri'}
@@ -1344,9 +1354,6 @@ def get_molnar_performance(animal, dataset_key):
 
 # region load model parameters & results
 def load_SC_model_dict(outcomedir):
-    '''
-    读取SC模型的参数
-    '''
     SC_model_dict = cf.load_dict_separate(outcomedir+'/SC_model/SC_model_dict')
     return SC_model_dict
 # endregion
@@ -1577,6 +1584,60 @@ def part_generate_axon_source_target(animal, dataset_key, direction_method, leng
     return results
 
 
+def get_SC_model_dict_from_CCMe_model(CCMe_model, animal, dataset_key, outcomes_dir):
+    # 生成对称的CCM
+    CCMe_sym_model = pd.DataFrame((CCMe_model.values+CCMe_model.values.T)/2, index=CCMe_model.index, columns=CCMe_model.columns)
+
+    # 整合
+    SC_model_dict = {'CCMe': CCMe_model, 'CCMe_sym': CCMe_sym_model}
+
+    # 生成normalized SC和log SC
+    new_entries = {}
+    for k, v in SC_model_dict.items():
+        normalized = normalize_SC(v, animal, dataset_key)
+        new_entries[f"{k}_normalized"] = normalized
+        new_entries[f"{k}_normalized_log"] = log_SC(normalized, animal, dataset_key)
+
+    # 合并到原字典
+    SC_model_dict.update(new_entries)
+
+    # 生成FLN
+    SC_model_dict['FLNe'] = CCM_to_FLN(CCMe_model)
+    
+    # 保存
+    cf.save_dict_separate(SC_model_dict, outcomes_dir+'/SC_model/SC_model_dict')
+    return SC_model_dict
+
+
+def get_SC_model_dict_from_CCMt_model(CCMt_model, animal, dataset_key, outcomes_dir):
+    # 去掉对角线
+    CCMe_model = cf.replace_df_diagonal(CCMt_model, replace_value=np.nan)
+    
+    # 生成对称的CCM
+    CCMe_sym_model = pd.DataFrame((CCMe_model.values+CCMe_model.values.T)/2, index=CCMe_model.index, columns=CCMe_model.columns)
+
+    # 整合
+    SC_model_dict = {'CCMe': CCMe_model, 'CCMe_sym': CCMe_sym_model, 'CCMt': CCMt_model}
+
+    # 生成normalized SC和log SC
+    new_entries = {}
+    for k, v in SC_model_dict.items():
+        normalized = normalize_SC(v, animal, dataset_key)
+        new_entries[f"{k}_normalized"] = normalized
+        new_entries[f"{k}_normalized_log"] = log_SC(normalized, animal, dataset_key)
+
+    # 合并到原字典
+    SC_model_dict.update(new_entries)
+
+    # 生成FLN
+    SC_model_dict['FLNe'] = CCM_to_FLN(CCMe_model)
+    SC_model_dict['FLNt'] = CCM_to_FLN(CCMt_model)
+    
+    # 保存
+    cf.save_dict_separate(SC_model_dict, outcomes_dir+'/SC_model/SC_model_dict')
+    return SC_model_dict
+
+
 def generate_SC_from_axon_source_target(animal, dataset_key, outcomes_dir=None, timedir=None, indices_ss=None, indices_tt=None):
     '''
     Get the model SC and Data SC.
@@ -1611,33 +1672,7 @@ def generate_SC_from_axon_source_target(animal, dataset_key, outcomes_dir=None, 
 
     # 转换为normal
     CCMt_model = convert_split_df_to_normal(split_CCMt_model, animal, dataset_key, method='sum')
-    
-    # 去掉对角线
-    CCMe_model = cf.replace_df_diagonal(CCMt_model, replace_value=np.nan)
-
-    # 生成对称的CCM
-    CCMe_sym_model = pd.DataFrame((CCMe_model.values+CCMe_model.values.T)/2, index=CCMe_model.index, columns=CCMe_model.columns)
-
-    # 整合
-    SC_model_dict = {'CCMe': CCMe_model, 'CCMe_sym': CCMe_sym_model, 'CCMt': CCMt_model}
-
-    # 生成normalized SC和log SC
-    new_entries = {}
-    for k, v in SC_model_dict.items():
-        normalized = normalize_SC(v, animal, dataset_key)
-        new_entries[f"{k}_normalized"] = normalized
-        new_entries[f"{k}_normalized_log"] = log_SC(normalized, animal, dataset_key)
-
-    # 合并到原字典
-    SC_model_dict.update(new_entries)
-
-    # 生成FLN
-    SC_model_dict['FLNe'] = CCM_to_FLN(CCMe_model)
-    SC_model_dict['FLNt'] = CCM_to_FLN(CCMt_model)
-    
-    # 保存
-    cf.save_dict_separate(SC_model_dict, outcomes_dir+'/SC_model/SC_model_dict')
-    return SC_model_dict
+    return get_SC_model_dict_from_CCMt_model(CCMt_model, animal, dataset_key, outcomes_dir)
 
 
 def SC_type_to_SC_dict_key(SC_type):
@@ -1776,6 +1811,256 @@ class AxonGrowthModel(cf.MetaModel):
             SC_model = self.get_suitable_SC_model_masked_as_data()
             SC_data = self.animal_info.SC_data
             return data_model_relative_error(SC_model, SC_data, self.animal, self.dataset_key, diagonal=diagonal)
+
+
+def area_EDR_3d_connection_generation(animal, dataset_key, Lambda):
+    animal_info = AnimalInfo(animal, dataset_key)
+    area_center_dict_3D = animal_info.area_center_dict_3D
+
+    CCMt = animal_info.SC_data.copy()
+    for source_area in area_center_dict_3D.keys():
+        source_center = np.array(area_center_dict_3D[source_area])
+        for target_area in area_center_dict_3D.keys():
+            target_center = np.array(area_center_dict_3D[target_area])
+            distance = np.linalg.norm(source_center - target_center)
+            CCMt.loc[source_area, target_area] = np.exp(-distance / Lambda)
+    return CCMt
+
+
+class AreaEDR3DModel(AxonGrowthModel):
+    def set_default_params(self):
+        pass
+
+    def _check_unique_Lambda(self):
+        try:
+            unique_Lambda = self.get_unique_Lambda()
+            return unique_Lambda
+        except:
+            raise ValueError('Lambda is not unique, cannot run AreaEDR3DModel.')
+
+    def run_detail(self):
+        CCMt_model = area_EDR_3d_connection_generation(self.animal, self.dataset_key, self._check_unique_Lambda())
+        self.simulation_results = {'CCMt_model': CCMt_model}
+
+    @property
+    def SC_model_dict(self):
+        '''
+        获取SC_model_dict
+        '''
+        try:
+            return load_SC_model_dict(self.outcomes_dir)
+        except:
+            return get_SC_model_dict_from_CCMt_model(self.get_simulation_value('CCMt_model'), self.animal, self.dataset_key, self.outcomes_dir)
+
+
+class VoxelEDR3DModel(AxonGrowthModel):
+    pass
+
+
+def calculate_weighted_matching_index(weighted_adj, epsilon=1e-10):
+    n_nodes = weighted_adj.shape[0]
+    
+    # 对称性检查
+    if not np.allclose(weighted_adj, weighted_adj.T):
+        raise ValueError("邻接矩阵应该是对称的")
+    
+    matching_matrix = np.zeros((n_nodes, n_nodes))
+    
+    for i in range(n_nodes):
+        for j in range(i+1, n_nodes):
+            numerator = 0.0  # 分子：共同邻居的权重和
+            denominator = 0.0  # 分母：所有邻居的权重和
+            
+            # 遍历所有可能的邻居节点（排除i和j自身）
+            for k in set(range(n_nodes)) - {i, j}:
+                w_ik = weighted_adj[i, k]
+                w_jk = weighted_adj[j, k]
+                
+                # 分子：只有k是共同邻居时才累加
+                if w_ik > 0 and w_jk > 0:
+                    numerator += w_ik + w_jk
+                
+                # 分母：k是任一节点的邻居就累加
+                if w_ik > 0 or w_jk > 0:
+                    denominator += w_ik + w_jk
+            
+            # 标准化计算
+            if denominator > epsilon:
+                matching_matrix[i, j] = numerator / denominator
+            else:
+                matching_matrix[i, j] = 0
+            
+            matching_matrix[j, i] = matching_matrix[i, j]
+    
+    return matching_matrix
+
+
+def calculate_binary_matching_index(adj, epsilon=1e-10):
+    binary_adj = (adj > 0).astype(float)
+    return calculate_weighted_matching_index(binary_adj, epsilon)
+
+
+def initialize_adjacency_matrix(SC_data, init_connection_num):
+    """
+    初始化二进制邻接矩阵,使用SC_data中最强的连接
+    返回带有区域标签的DataFrame
+    """
+    area_num = len(SC_data)
+    # 创建带有正确索引的DataFrame
+    binary_adj_pd = pd.DataFrame(
+        np.zeros((area_num, area_num), dtype=float),
+        index=SC_data.index,
+        columns=SC_data.columns
+    )
+    
+    # 获取SC值（不包括对角线）
+    SC_values = SC_data.copy()
+    np.fill_diagonal(SC_values.values, 0)
+    
+    # 获取最强的init_connection_num个连接的索引
+    flat_indices = np.argsort(SC_values.values, axis=None)[::-1][:init_connection_num]
+    
+    for idx in flat_indices:
+        i, j = np.unravel_index(idx, SC_values.shape)
+        # 使用.loc确保使用标签索引
+        binary_adj_pd.iloc[i, j] = 1
+        binary_adj_pd.iloc[j, i] = 1  # 确保对称
+    return binary_adj_pd
+
+
+def calculate_probability_matrix(binary_adj_pd, distance_3D, Lambda, gamma):
+    """
+    计算添加新连接的概率矩阵
+    返回带有区域标签的DataFrame
+    """
+    # 距离成分 - 使用.values进行计算
+    distance_component = np.exp(-distance_3D.values / Lambda)
+    
+    # 匹配指数成分 - 使用.values进行计算
+    matching_index_component = calculate_binary_matching_index(binary_adj_pd.values)
+    
+    # 组合概率矩阵
+    prob_matrix = distance_component * (matching_index_component ** gamma)
+    
+    # 将已有连接的权重设为0
+    prob_matrix[binary_adj_pd.values > 0] = 0
+    
+    # 归一化
+    total_weight = prob_matrix.sum()
+    if total_weight > 0:
+        prob_matrix /= total_weight
+    
+    # 转换为DataFrame并保留标签
+    return pd.DataFrame(
+        prob_matrix,
+        index=binary_adj_pd.index,
+        columns=binary_adj_pd.columns
+    )
+
+
+def add_new_connection(binary_adj_pd, prob_matrix, rng):
+    """
+    根据概率矩阵添加新连接
+    直接修改binary_adj DataFrame
+    """
+    area_num = binary_adj_pd.shape[0]
+    flat_probs = prob_matrix.values.flatten()
+    
+    # 确保概率和为1（考虑浮点误差）
+    flat_probs /= flat_probs.sum()
+    
+    chosen_idx = rng.choice(flat_probs.size, p=flat_probs)
+    row_idx, col_idx = np.unravel_index(chosen_idx, prob_matrix.shape)
+    
+    # 获取实际的行列标签
+    row_label = binary_adj_pd.index[row_idx]
+    col_label = binary_adj_pd.columns[col_idx]
+    
+    # 添加对称连接
+    binary_adj_pd.loc[row_label, col_label] = 1
+    binary_adj_pd.loc[col_label, row_label] = 1
+    return binary_adj_pd
+
+
+def betzel_like_connection_generation(animal, dataset_key, Lambda, gamma, init_connection_num, seed):
+    rng = cf.get_local_rng(seed=seed)
+    animal_info = AnimalInfo(animal, dataset_key)
+    
+    # 获取基础数据
+    distance_3D = animal_info.distance_3D
+    SC_data = animal_info.SC_data
+    
+    # 确认两者的索引和列标签一致(顺序也一致)
+    assert distance_3D.index.equals(SC_data.index) and distance_3D.columns.equals(SC_data.columns), "Distance matrix and SC data must have the same index and columns."
+    
+    # 计算目标连接数
+    density = get_connection_density(SC_data, animal, dataset_key)
+    area_num = len(animal_info.full_name)
+    final_connection_num = int(area_num * (area_num - 1) / 2 * density)
+    
+    # 初始化邻接矩阵
+    binary_adj_pd = initialize_adjacency_matrix(SC_data, init_connection_num)
+    
+    # 迭代添加连接
+    for _ in range(final_connection_num - init_connection_num):
+        prob_matrix = calculate_probability_matrix(
+            binary_adj_pd, distance_3D, Lambda, gamma
+        )
+        binary_adj_pd = add_new_connection(binary_adj_pd, prob_matrix, rng)
+    
+    return binary_adj_pd
+
+
+def chen_like_weighted_assignment(animal, dataset_key, Lambda, gamma, binary_adj_pd):
+    animal_info = AnimalInfo(animal, dataset_key)
+    
+    # 获取基础数据
+    distance_3D = animal_info.distance_3D
+    SC_data = animal_info.SC_data
+    
+    # 确认两者的索引和列标签一致(顺序也一致)
+    assert distance_3D.index.equals(SC_data.index) and distance_3D.columns.equals(SC_data.columns), "Distance matrix and SC data must have the same index and columns."
+
+    prob_matrix = calculate_probability_matrix(binary_adj_pd, distance_3D, Lambda, gamma)
+
+    weighted_adj_pd = prob_matrix * binary_adj_pd
+
+    return weighted_adj_pd
+
+
+class BetzelLikeModel(AxonGrowthModel):
+    def set_default_params(self):
+        pass
+
+    def run_detail(self):
+        binary_adj_pd = betzel_like_connection_generation(
+            self.animal,
+            self.dataset_key,
+            self.get_unique_Lambda(),
+            self.gamma,
+            self.init_connection_num,
+            self.the_seed
+        )
+        weighted_adj_pd = chen_like_weighted_assignment(
+            self.animal,
+            self.dataset_key,
+            self.get_unique_Lambda(),
+            self.gamma,
+            binary_adj_pd
+        )
+        self.simulation_results = {
+            'CCMe_model': weighted_adj_pd,
+        }
+
+    @property
+    def SC_model_dict(self):
+        '''
+        获取SC_model_dict
+        '''
+        try:
+            return load_SC_model_dict(self.outcomes_dir)
+        except:
+            return get_SC_model_dict_from_CCMe_model(self.get_simulation_value('CCMe_model'), self.animal, self.dataset_key, self.outcomes_dir)
 # endregion
 
 
@@ -2061,6 +2346,24 @@ def get_area_level_property_repeated_by_SC(SC, property_df, animal, dataset_key,
 
 
 # region analyze
+def get_connection_density(SC, animal, dataset_key, diagonal=False):
+    '''
+    计算连接密度
+    '''
+    animal_info = AnimalInfo(animal, dataset_key)
+    target_name = animal_info.target_name
+    source_name = animal_info.source_name
+    sub_SC = cf.get_sub_df(df=SC, row_list=source_name, col_list=target_name)
+    if diagonal:
+        total_connection_num = sub_SC.size
+        existing_connection_num = np.sum(sub_SC.values > 0)
+    else:
+        total_connection_num = sub_SC.size - np.min(len(source_name), len(target_name))  # 去掉对角线
+        existing_connection_num = np.sum(sub_SC.values > 0) - np.sum(np.diag(sub_SC.values) > 0)
+    connection_density = existing_connection_num / total_connection_num
+    return connection_density
+
+
 def data_model_correlation(SC_data, SC_model, animal, dataset_key, diagonal=False):
     animal_info = AnimalInfo(animal, dataset_key)
     target_name = animal_info.target_name
@@ -3095,7 +3398,7 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         cf.plt_linregress(ax, x, y, show_list=['r'], scatter_mode='density', scatter_kwargs={'cbar_kwargs': {'ticks': []}}, text_size=cf.LABEL_SIZE*0.75, text_kwargs={'text_x': 0.05, 'text_y': 1.})
         cf.set_ax(ax, xlabel='Distance 3D (mm)', ylabel='Distance 2D (mm)')
 
-    def angle_distance_scatter(self, ax):
+    def angle_distance_scatter(self, ax, n_neighbors):
         mask = get_weight_category_mask(self.animal, self.dataset_key, diagonal=False)
         angle_matrix = self.animal_info.angle_2D
         distance_matrix = self.animal_info.distance_2D
@@ -3109,12 +3412,13 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
                     distance_list.append(distance_matrix.loc[r, c])
         cf.plt_scatter(ax, distance_list, angle_list)
 
-        result = angle_distance_independence_test(angle_list, distance_list, angle_bin_num=self.bin_num, distance_bin_num=self.bin_num)
-        cf.add_text_by_dict(ax, result, text_x=0.8, text_y=1.2, text_kwargs={'transform': ax.transAxes}, fontsize=cf.LABEL_SIZE*0.75)
+        result = {}
+        result['mutual_info'] = mutual_info_regression(np.array(distance_list).reshape(-1, 1), angle_list, n_neighbors=n_neighbors)[0]
+        cf.add_text_by_dict(ax, result, text_x=0.5, text_y=1.0, text_kwargs={'transform': ax.transAxes, 'ha': 'center', 'va': 'bottom'}, fontsize=cf.LABEL_SIZE*0.75)
 
         cf.set_ax(ax, xlabel='Distance (mm)', ylabel='Angle')
 
-    def angle_distance_independence_with_distance_threshold(self, ax, distance_threshold_list):
+    def angle_distance_independence_with_distance_threshold(self, ax, distance_threshold_list, n_neighbors, plt_line_xlim=None):
         mask = get_weight_category_mask(self.animal, self.dataset_key, diagonal=False)
         angle_matrix = self.animal_info.angle_2D
         distance_matrix = self.animal_info.distance_2D
@@ -3125,24 +3429,22 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
             distance_list = []
             for r in mask['all'].index:
                 for c in mask['all'].columns:
-                    # if mask['all'].loc[r, c] and distance_matrix.loc[r, c] >= distance_threshold:
                     if mask['all'].loc[r, c] and distance_matrix.loc[r, c] <= distance_threshold:
                         angle_list.append(angle_matrix.loc[r, c])
                         distance_list.append(distance_matrix.loc[r, c])
-            result = angle_distance_independence_test(angle_list, distance_list, angle_bin_num=self.bin_num, distance_bin_num=self.bin_num)
+            result = {}
+            try:
+                mutual_info = mutual_info_regression(np.array(distance_list).reshape(-1, 1), angle_list, n_neighbors=n_neighbors)[0]
+            except:
+                mutual_info = np.nan
+            result['mutual_info'] = mutual_info
             independence_list.append(result)
 
-        JSD_list = [result['JSD'] for result in independence_list]
-        KL_list = [result['KL'] for result in independence_list]
+        mutual_info_list = [result['mutual_info'] for result in independence_list]
 
-        cf.plt_line(ax, x=distance_threshold_list, y=JSD_list, color=cf.BLACK, label='JSD')
-        twin_ax = cf.add_twin_ax(ax, axis='x', color=cf.ORANGE)
-        cf.plt_line(twin_ax, x=distance_threshold_list, y=KL_list, color=cf.ORANGE, label='KL')
-        # just add a fake line to show legend
-        cf.plt_line(ax, x=[0], y=[0], color=cf.ORANGE, label='KL')
+        cf.plt_line(ax, x=distance_threshold_list, y=mutual_info_list, color=cf.BLACK, label='Mutual info', xlim=plt_line_xlim)
         cf.add_vline(ax, x=self.axon_growth_model.get_unique_Lambda() * 5, color=cf.RED, linestyle='--', label='$5\Lambda$')
-        cf.set_ax(ax, xlabel='Threshold (mm)', ylabel='JSD', legend_loc='upper left')
-        cf.set_ax(twin_ax, ylabel='KL', legend=False)
+        cf.set_ax(ax, xlabel='Threshold (mm)', ylabel='Mutual info', legend_loc='upper left')
 
     def distance_relative_error(self, ax, dim='2D'):
         if dim == '2D':
@@ -3594,16 +3896,21 @@ class PaperFig:
         fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
         independence_kwargs_list = []
         angle_distance_independence_with_distance_threshold_kwargs_list = []
+        n_neighbors = 20
         for title, ax in ax_dict.items():
-            independence_kwargs_list.append({'ax': ax[0]})
-            distance_threshold_list = np.linspace(0, np.nanmax(self.multi_visualizer.get_single_visualizer(title).animal_info.distance_2D.values), 40)[:-5]
-            angle_distance_independence_with_distance_threshold_kwargs_list.append({'ax': ax[1], 'distance_threshold_list': distance_threshold_list})
+            independence_kwargs_list.append({'ax': ax[0], 'n_neighbors': n_neighbors})
+            distance_threshold_list = np.linspace(0, np.nanmax(self.multi_visualizer.get_single_visualizer(title).animal_info.distance_2D.values), 40)
+            if title == 'human_lariviere':
+                plt_line_xlim = [self.multi_visualizer.get_single_visualizer(title).axon_growth_model.get_unique_Lambda(), None]
+            else:
+                plt_line_xlim = [2*self.multi_visualizer.get_single_visualizer(title).axon_growth_model.get_unique_Lambda(), None]
+            angle_distance_independence_with_distance_threshold_kwargs_list.append({'ax': ax[1], 'distance_threshold_list': distance_threshold_list, 'plt_line_xlim': plt_line_xlim, 'n_neighbors': n_neighbors})
         self.multi_visualizer.multi_ax_plot_by_single_visualizer('angle_distance_scatter', independence_kwargs_list)
         self.multi_visualizer.multi_ax_plot_by_single_visualizer('angle_distance_independence_with_distance_threshold', angle_distance_independence_with_distance_threshold_kwargs_list)
         for title, ax in ax_dict.items():
             ax[1].set_xlim(ax[0].get_xlim())
         self.multi_visualizer.add_tag()
-        self.multi_visualizer.add_subfig_title()
+        self.multi_visualizer.add_subfig_title(y=1.05)
         # self.multi_visualizer.rm_redundant_xylabel()
         self.multi_visualizer.save_fig(self.figdir+'/SI_fig_2')
 
@@ -3719,6 +4026,33 @@ class PaperFig:
         self.multi_visualizer.add_subfig_title()
         # self.multi_visualizer.rm_redundant_xylabel()
         self.multi_visualizer.save_fig(self.figdir+'/SI_fig_7')
+
+    def private_fig_1(self):
+        '''
+        test different neighbor num, and how it influence angle distance independence
+        '''
+        for n_neighbors in range(3, 30):
+            get_ax_kwargs = {'nrows': 2}
+            get_suitable_figsize_kwargs = {'nrows': 2}
+            fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
+            independence_kwargs_list = []
+            angle_distance_independence_with_distance_threshold_kwargs_list = []
+            for title, ax in ax_dict.items():
+                independence_kwargs_list.append({'ax': ax[0], 'n_neighbors': n_neighbors})
+                distance_threshold_list = np.linspace(0, np.nanmax(self.multi_visualizer.get_single_visualizer(title).animal_info.distance_2D.values), 40)
+                if title == 'human_lariviere':
+                    plt_line_xlim = [self.multi_visualizer.get_single_visualizer(title).axon_growth_model.get_unique_Lambda(), None]
+                else:
+                    plt_line_xlim = [2*self.multi_visualizer.get_single_visualizer(title).axon_growth_model.get_unique_Lambda(), None]
+                angle_distance_independence_with_distance_threshold_kwargs_list.append({'ax': ax[1], 'distance_threshold_list': distance_threshold_list, 'plt_line_xlim': plt_line_xlim, 'n_neighbors': n_neighbors})
+            self.multi_visualizer.multi_ax_plot_by_single_visualizer('angle_distance_scatter', independence_kwargs_list)
+            self.multi_visualizer.multi_ax_plot_by_single_visualizer('angle_distance_independence_with_distance_threshold', angle_distance_independence_with_distance_threshold_kwargs_list)
+            for title, ax in ax_dict.items():
+                ax[1].set_xlim(ax[0].get_xlim())
+            self.multi_visualizer.add_tag()
+            self.multi_visualizer.add_subfig_title(y=1.05)
+            # self.multi_visualizer.rm_redundant_xylabel()
+            self.multi_visualizer.save_fig(self.figdir+'/private_fig_1/'+f'n_neighbors_{n_neighbors}')
 
     def table_1(self):
         '''
