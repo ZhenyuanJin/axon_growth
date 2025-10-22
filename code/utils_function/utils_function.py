@@ -469,7 +469,7 @@ class AnimalInfo(AnimalDir):
         '''
         super().__init__(animal, dataset_key)
         self.force_re_preprocess = False
-        self.force_re_preprocess = True
+        # self.force_re_preprocess = True
         self._re_preprocess_dict = {} # 运行过的计算,标记为True
 
         SC_type_dict = {'mouse_gamanut': 'FLNe', 'marmoset_majka': 'FLNe', 'marmoset_V4': 'FLNe', 'macaque_markov29': 'FLNe', 'macaque_markov40': 'FLNe', 'human_lariviere': 'Dmri'}
@@ -1858,39 +1858,42 @@ class VoxelEDR3DModel(AxonGrowthModel):
 
 
 def calculate_weighted_matching_index(weighted_adj, epsilon=1e-10):
-    n_nodes = weighted_adj.shape[0]
-    
-    # 对称性检查
     if not np.allclose(weighted_adj, weighted_adj.T):
         raise ValueError("邻接矩阵应该是对称的")
     
-    matching_matrix = np.zeros((n_nodes, n_nodes))
+    n = weighted_adj.shape[0]
+    matching_matrix = np.zeros((n, n))
     
-    for i in range(n_nodes):
-        for j in range(i+1, n_nodes):
-            numerator = 0.0  # 分子：共同邻居的权重和
-            denominator = 0.0  # 分母：所有邻居的权重和
+    # 预处理:创建排除对角线的掩码
+    mask = np.ones(n, dtype=bool)
+    
+    # 预计算邻居存在矩阵
+    exists = (weighted_adj > 0)
+    
+    for i in range(n):
+        w_i = weighted_adj[i]
+        e_i = exists[i]
+        
+        for j in range(i+1, n):
+            w_j = weighted_adj[j]
+            e_j = exists[j]
             
-            # 遍历所有可能的邻居节点（排除i和j自身）
-            for k in set(range(n_nodes)) - {i, j}:
-                w_ik = weighted_adj[i, k]
-                w_jk = weighted_adj[j, k]
-                
-                # 分子：只有k是共同邻居时才累加
-                if w_ik > 0 and w_jk > 0:
-                    numerator += w_ik + w_jk
-                
-                # 分母：k是任一节点的邻居就累加
-                if w_ik > 0 or w_jk > 0:
-                    denominator += w_ik + w_jk
+            # 创建排除i,j的掩码
+            mask[:] = True
+            mask[[i, j]] = False
             
-            # 标准化计算
-            if denominator > epsilon:
-                matching_matrix[i, j] = numerator / denominator
-            else:
-                matching_matrix[i, j] = 0
+            # 计算两种掩码
+            common = e_i & e_j & mask
+            any_neighbor = (e_i | e_j) & mask
             
-            matching_matrix[j, i] = matching_matrix[i, j]
+            # 直接使用向量化求和
+            num = (w_i[common] + w_j[common]).sum()
+            den = (w_i[any_neighbor] + w_j[any_neighbor]).sum()
+            
+            if den > epsilon:
+                val = num / den
+                matching_matrix[i, j] = val
+                matching_matrix[j, i] = val
     
     return matching_matrix
 
@@ -1918,7 +1921,7 @@ def initialize_adjacency_matrix(SC_data, init_connection_num):
     np.fill_diagonal(SC_values.values, 0)
     
     # 获取最强的init_connection_num个连接的索引
-    flat_indices = np.argsort(SC_values.values, axis=None)[::-1][:init_connection_num]
+    flat_indices = np.argsort(SC_values.values, axis=None)[::-1][:int(init_connection_num/2)]
     
     for idx in flat_indices:
         i, j = np.unravel_index(idx, SC_values.shape)
@@ -1928,7 +1931,7 @@ def initialize_adjacency_matrix(SC_data, init_connection_num):
     return binary_adj_pd
 
 
-def calculate_probability_matrix(binary_adj_pd, distance_3D, Lambda, gamma):
+def calculate_probability_matrix(binary_adj_pd, distance_3D, Lambda, gamma, small_shift=1e-6, set_existing_to_zero=True):
     """
     计算添加新连接的概率矩阵
     返回带有区域标签的DataFrame
@@ -1940,11 +1943,12 @@ def calculate_probability_matrix(binary_adj_pd, distance_3D, Lambda, gamma):
     matching_index_component = calculate_binary_matching_index(binary_adj_pd.values)
     
     # 组合概率矩阵
-    prob_matrix = distance_component * (matching_index_component ** gamma)
-    
-    # 将已有连接的权重设为0
-    prob_matrix[binary_adj_pd.values > 0] = 0
-    
+    prob_matrix = distance_component * ((matching_index_component + small_shift) ** gamma)
+
+    if set_existing_to_zero:
+        # 将已有连接的权重设为0
+        prob_matrix[binary_adj_pd.values > 0] = 0
+
     # 归一化
     total_weight = prob_matrix.sum()
     if total_weight > 0:
@@ -1982,7 +1986,7 @@ def add_new_connection(binary_adj_pd, prob_matrix, rng):
     return binary_adj_pd
 
 
-def betzel_like_connection_generation(animal, dataset_key, Lambda, gamma, init_connection_num, seed):
+def betzel_like_connection_generation(animal, dataset_key, Lambda, gamma, init_connection_num, seed, final_connection_density=None):
     rng = cf.get_local_rng(seed=seed)
     animal_info = AnimalInfo(animal, dataset_key)
     
@@ -1994,15 +1998,16 @@ def betzel_like_connection_generation(animal, dataset_key, Lambda, gamma, init_c
     assert distance_3D.index.equals(SC_data.index) and distance_3D.columns.equals(SC_data.columns), "Distance matrix and SC data must have the same index and columns."
     
     # 计算目标连接数
-    density = get_connection_density(SC_data, animal, dataset_key)
+    if final_connection_density is None:
+        final_connection_density = get_connection_density(SC_data, animal, dataset_key)
     area_num = len(animal_info.full_name)
-    final_connection_num = int(area_num * (area_num - 1) / 2 * density)
-    
+    final_connection_num = int(area_num * (area_num - 1) / 2 * final_connection_density)
+
     # 初始化邻接矩阵
     binary_adj_pd = initialize_adjacency_matrix(SC_data, init_connection_num)
     
     # 迭代添加连接
-    for _ in range(final_connection_num - init_connection_num):
+    for _ in tqdm(range(final_connection_num - init_connection_num)):
         prob_matrix = calculate_probability_matrix(
             binary_adj_pd, distance_3D, Lambda, gamma
         )
@@ -2021,7 +2026,7 @@ def chen_like_weighted_assignment(animal, dataset_key, Lambda, gamma, binary_adj
     # 确认两者的索引和列标签一致(顺序也一致)
     assert distance_3D.index.equals(SC_data.index) and distance_3D.columns.equals(SC_data.columns), "Distance matrix and SC data must have the same index and columns."
 
-    prob_matrix = calculate_probability_matrix(binary_adj_pd, distance_3D, Lambda, gamma)
+    prob_matrix = calculate_probability_matrix(binary_adj_pd, distance_3D, Lambda, gamma, set_existing_to_zero=False)
 
     weighted_adj_pd = prob_matrix * binary_adj_pd
 
@@ -2036,7 +2041,7 @@ class BetzelLikeModel(AxonGrowthModel):
         binary_adj_pd = betzel_like_connection_generation(
             self.animal,
             self.dataset_key,
-            self.get_unique_Lambda(),
+            self.Lambda,
             self.gamma,
             self.init_connection_num,
             self.the_seed
@@ -2044,7 +2049,7 @@ class BetzelLikeModel(AxonGrowthModel):
         weighted_adj_pd = chen_like_weighted_assignment(
             self.animal,
             self.dataset_key,
-            self.get_unique_Lambda(),
+            self.Lambda,
             self.gamma,
             binary_adj_pd
         )
@@ -2061,6 +2066,29 @@ class BetzelLikeModel(AxonGrowthModel):
             return load_SC_model_dict(self.outcomes_dir)
         except:
             return get_SC_model_dict_from_CCMe_model(self.get_simulation_value('CCMe_model'), self.animal, self.dataset_key, self.outcomes_dir)
+
+
+class AdaptedBetzelLikeModel(BetzelLikeModel):
+    def run_detail(self):
+        animal_info = AnimalInfo(self.animal, self.dataset_key)
+        binary_adj_pd = animal_info.SC_data.copy()
+        binary_adj_pd = binary_adj_pd.astype(int)
+        binary_adj_pd[binary_adj_pd > 0] = 1
+        if self.binary_mode == 'union':
+            binary_adj_pd = binary_adj_pd | binary_adj_pd.T
+        elif self.binary_mode == 'intersection':
+            binary_adj_pd = binary_adj_pd & binary_adj_pd.T
+
+        weighted_adj_pd = chen_like_weighted_assignment(
+            self.animal,
+            self.dataset_key,
+            self.Lambda,
+            self.gamma,
+            binary_adj_pd
+        )
+        self.simulation_results = {
+            'CCMe_model': weighted_adj_pd,
+        }
 # endregion
 
 
@@ -2358,7 +2386,7 @@ def get_connection_density(SC, animal, dataset_key, diagonal=False):
         total_connection_num = sub_SC.size
         existing_connection_num = np.sum(sub_SC.values > 0)
     else:
-        total_connection_num = sub_SC.size - np.min(len(source_name), len(target_name))  # 去掉对角线
+        total_connection_num = sub_SC.size - np.min([len(source_name), len(target_name)])  # 去掉对角线
         existing_connection_num = np.sum(sub_SC.values > 0) - np.sum(np.diag(sub_SC.values) > 0)
     connection_density = existing_connection_num / total_connection_num
     return connection_density
@@ -4099,4 +4127,90 @@ class PaperFig:
                 single_visualizer.anterograde_neuron_by_area(ax, area)
                 cf.set_ax(ax, title=area)
                 cf.save_fig(fig, cf.pj(self._check_figdir, single_visualizer.title, cf.cat(area, 'anterograde')), **self.save_fig_kwargs)
+
+
+def performance_heatmap(ax_list, different_model_performance_dict, only_show_animal=True, show_accuracy_list=None, accuracy_key_to_label_in_fig_dict=None):
+    organized_different_model_performance_dict = cf.swap_dict_level(different_model_performance_dict, {0: 1, 1: 0})
+    for i, (animal_and_dataset_key, local_performance_dict) in enumerate(organized_different_model_performance_dict.items()):
+        ax = ax_list[i]
+        animal = animal_and_dataset_key.split('_')[0]
+        different_model_performance_df = pd.DataFrame(local_performance_dict)
+        
+        if animal in ['mouse', 'macaque']:
+            molnar_performance = get_molnar_performance(animal=animal, dataset_key='gamanut' if animal=='mouse' else 'markov29')
+            for k, v in molnar_performance.items():
+                RMAE = v['RMAE']
+                different_model_performance_df.loc[f'accuracy_{k}', 'molnar'] = 1 - RMAE
+            different_model_performance_df.loc['correlation', 'molnar'] = np.nan  # Molnár et al.没有提供correlation指标
+        
+        if show_accuracy_list is not None:
+            different_model_performance_df = cf.get_sub_df(different_model_performance_df, row_list=show_accuracy_list)
+        if accuracy_key_to_label_in_fig_dict is not None:
+            different_model_performance_df.index = [accuracy_key_to_label_in_fig_dict.get(row, row) for row in different_model_performance_df.index]
+        cf.sns_heatmap(ax, different_model_performance_df, cmap=cf.DENSITY_CMAP, heatmap_kwargs={'annot': True, 'fmt': '.3f'})
+        # 在每一行的最大值上添加一个三角形
+        for row_idx in range(different_model_performance_df.shape[0]):
+            row_values = different_model_performance_df.iloc[row_idx].values
+            max_col_idx = np.nanargmax(row_values)
+            max_value = row_values[max_col_idx]
+            cf.plt_polygon(ax, [[max_col_idx, row_idx], [max_col_idx, row_idx + 1], [max_col_idx + 1, row_idx]], color='red')
+        title = animal if only_show_animal else animal_and_dataset_key
+        cf.set_ax(ax, xlabel='Model Type', ylabel='', title=title)
+
+
+class PaperFigCompareModel:
+    def __init__(self, model_timedir_list_UAR_EDR, model_timedir_list_song, model_timedir_list_area_EDR_3d, model_timedir_list_betzel_like):
+        self.animal_list = ['mouse', 'marmoset', 'macaque', 'human']
+        self.dataset_key_list = ['gamanut', 'majka', 'markov40', 'lariviere']
+        self.animal_num = len(self.animal_list)
+        self.figdir = '../../results/figs_compare_model/'
+        self.force_re_compute = False
+        self.force_re_compute = True
+
+        self.model_timedir_list_UAR_EDR = model_timedir_list_UAR_EDR
+        self.model_timedir_list_song = model_timedir_list_song
+        self.model_timedir_list_area_EDR_3d = model_timedir_list_area_EDR_3d
+        self.model_timedir_list_betzel_like = model_timedir_list_betzel_like
+
+        self.multi_visualizer_UAR_EDR = MultiCaseVisualizer(self.animal_list, self.dataset_key_list, self.model_timedir_list_UAR_EDR)
+        self.multi_visualizer_song = MultiCaseVisualizer(self.animal_list, self.dataset_key_list, self.model_timedir_list_song)
+        self.multi_visualizer_area_EDR_3d = MultiCaseVisualizer(self.animal_list, self.dataset_key_list, self.model_timedir_list_area_EDR_3d)
+        self.multi_visualizer_betzel_like = MultiCaseVisualizer(self.animal_list, self.dataset_key_list, self.model_timedir_list_betzel_like)
+
+    def get_performance(self):
+        if not self.force_re_compute:
+            with cf.FlexibleTry():
+                different_model_performance_dict = cf.load_dict(self.figdir+'/different_model_performance_dict/different_model_performance_dict')
+                return different_model_performance_dict
+        different_model_performance_dict = {}
+        model_types = ['UAR_EDR', 'song', 'area_EDR_3d', 'betzel_like']
+        multi_visualizers = [self.multi_visualizer_UAR_EDR, self.multi_visualizer_song, self.multi_visualizer_area_EDR_3d, self.multi_visualizer_betzel_like]
+
+        for model_type, multi_visualizer in zip(model_types, multi_visualizers):
+            performance_dict = {}
+            for single_visualizer in multi_visualizer.single_visualizer_list:
+                animal = single_visualizer.animal
+                dataset_key = single_visualizer.dataset_key
+                animal_and_dataset_key = single_visualizer.animal_info.animal_and_dataset_key
+                performance_dict[animal_and_dataset_key] = get_performance_dict(
+                    SC_data=single_visualizer.SC_data,
+                    SC_model=single_visualizer.SC_model_masked,
+                    animal=animal,
+                    dataset_key=dataset_key,
+                    diagonal=False
+                )
+            different_model_performance_dict[model_type] = performance_dict
+        cf.save_dict(different_model_performance_dict, self.figdir+'/different_model_performance_dict/different_model_performance_dict')
+        return different_model_performance_dict
+    
+    def performance_heatmap(self):
+        different_model_performance_dict = self.get_performance()
+        
+        fig, ax = cf.get_fig_ax(ncols=4, margin=cf.MARGIN.copy().update({'left': 0.1, 'right': 0.7}))
+        performance_heatmap(ax, different_model_performance_dict, only_show_animal=True)
+        cf.save_fig(fig, cf.pj(self.figdir, 'performance_heatmap_full'), bbox_inches='tight')
+
+        fig, ax = cf.get_fig_ax(ncols=4, margin=cf.MARGIN.copy().update({'left': 0.1, 'right': 0.7}))
+        performance_heatmap(ax, different_model_performance_dict, only_show_animal=True, show_accuracy_list=['correlation', 'accuracy_strong', 'accuracy_medium_strong', 'accuracy_weak_medium', 'accuracy_weak'], accuracy_key_to_label_in_fig_dict={'correlation': 'corr', 'accuracy_strong': 'acc_strong', 'accuracy_medium_strong': 'acc_med_strong', 'accuracy_weak_medium': 'acc_weak_med', 'accuracy_weak': 'acc_weak'})
+        cf.save_fig(fig, cf.pj(self.figdir, 'performance_heatmap_selected'), bbox_inches='tight')
 # endregion
