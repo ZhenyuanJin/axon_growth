@@ -1931,7 +1931,7 @@ def initialize_adjacency_matrix(SC_data, init_connection_num):
     return binary_adj_pd
 
 
-def calculate_probability_matrix(binary_adj_pd, distance_3D, Lambda, gamma, small_shift=1e-6, set_existing_to_zero=True):
+def calculate_probability_matrix(binary_adj_pd, distance_3D, Lambda, gamma, shift=1e-6, set_existing_to_zero=True):
     """
     计算添加新连接的概率矩阵
     返回带有区域标签的DataFrame
@@ -1943,7 +1943,7 @@ def calculate_probability_matrix(binary_adj_pd, distance_3D, Lambda, gamma, smal
     matching_index_component = calculate_binary_matching_index(binary_adj_pd.values)
     
     # 组合概率矩阵
-    prob_matrix = distance_component * ((matching_index_component + small_shift) ** gamma)
+    prob_matrix = distance_component * ((matching_index_component + shift) ** gamma)
 
     if set_existing_to_zero:
         # 将已有连接的权重设为0
@@ -2016,7 +2016,7 @@ def betzel_like_connection_generation(animal, dataset_key, Lambda, gamma, init_c
     return binary_adj_pd
 
 
-def chen_like_weighted_assignment(animal, dataset_key, Lambda, gamma, binary_adj_pd):
+def chen_like_weighted_assignment(animal, dataset_key, Lambda, gamma, binary_adj_pd, shift=1e-6):
     animal_info = AnimalInfo(animal, dataset_key)
     
     # 获取基础数据
@@ -2026,11 +2026,35 @@ def chen_like_weighted_assignment(animal, dataset_key, Lambda, gamma, binary_adj
     # 确认两者的索引和列标签一致(顺序也一致)
     assert distance_3D.index.equals(SC_data.index) and distance_3D.columns.equals(SC_data.columns), "Distance matrix and SC data must have the same index and columns."
 
-    prob_matrix = calculate_probability_matrix(binary_adj_pd, distance_3D, Lambda, gamma, set_existing_to_zero=False)
+    prob_matrix = calculate_probability_matrix(binary_adj_pd, distance_3D, Lambda, gamma, set_existing_to_zero=False, shift=shift)
 
     weighted_adj_pd = prob_matrix * binary_adj_pd
 
     return weighted_adj_pd
+
+
+def adapted_chen_like_weighted_assignment(animal, dataset_key, Lambda, gamma, binary_adj_pd, true_binary_adj_pd, shift=1e-6):
+    animal_info = AnimalInfo(animal, dataset_key)
+    
+    # 获取基础数据
+    distance_3D = animal_info.distance_3D
+    SC_data = animal_info.SC_data
+    
+    # 确认两者的索引和列标签一致(顺序也一致)
+    assert distance_3D.index.equals(SC_data.index) and distance_3D.columns.equals(SC_data.columns), "Distance matrix and SC data must have the same index and columns."
+
+    prob_matrix = calculate_probability_matrix(binary_adj_pd, distance_3D, Lambda, gamma, set_existing_to_zero=False, shift=shift)
+
+    weighted_adj_pd = prob_matrix * true_binary_adj_pd
+
+    return weighted_adj_pd
+
+
+def modify_weighted_adj_by_matching_index(weighted_adj_pd, epsilon=1e-10):
+    matching_index = calculate_weighted_matching_index(weighted_adj_pd.values, epsilon=epsilon)
+    modified_weighted_adj_pd = weighted_adj_pd.copy()
+    modified_weighted_adj_pd = modified_weighted_adj_pd * pd.DataFrame(matching_index, index=weighted_adj_pd.index, columns=weighted_adj_pd.columns)
+    return modified_weighted_adj_pd
 
 
 class BetzelLikeModel(AxonGrowthModel):
@@ -2057,6 +2081,8 @@ class BetzelLikeModel(AxonGrowthModel):
             'CCMe_model': weighted_adj_pd,
         }
 
+        self.check_fig(binary_adj_pd, weighted_adj_pd)
+
     @property
     def SC_model_dict(self):
         '''
@@ -2067,28 +2093,43 @@ class BetzelLikeModel(AxonGrowthModel):
         except:
             return get_SC_model_dict_from_CCMe_model(self.get_simulation_value('CCMe_model'), self.animal, self.dataset_key, self.outcomes_dir)
 
+    def check_fig(self, binary_adj_pd, weighted_adj_pd):
+        fig, axes = cf.gfa(ncols=2)
+        
+        ax = axes[0]
+        cf.sns_heatmap(ax, binary_adj_pd)
+        cf.set_ax(ax, title='Binary Connection Matrix')
+
+        ax = axes[1]
+        cf.sns_heatmap(ax, weighted_adj_pd)
+        cf.set_ax(ax, title='Weighted Connection Matrix')
+
+        cf.save_fig(fig, self.figs_dir+'/connection_matrices')
+
 
 class AdaptedBetzelLikeModel(BetzelLikeModel):
     def run_detail(self):
         animal_info = AnimalInfo(self.animal, self.dataset_key)
-        binary_adj_pd = animal_info.SC_data.copy()
-        binary_adj_pd = binary_adj_pd.astype(int)
-        binary_adj_pd[binary_adj_pd > 0] = 1
+        binary_adj_pd = (animal_info.SC_data.copy() > 0).astype(int)
         if self.binary_mode == 'union':
-            binary_adj_pd = binary_adj_pd | binary_adj_pd.T
+            sym_binary_adj_pd = binary_adj_pd | binary_adj_pd.T
         elif self.binary_mode == 'intersection':
-            binary_adj_pd = binary_adj_pd & binary_adj_pd.T
+            sym_binary_adj_pd = binary_adj_pd & binary_adj_pd.T
 
-        weighted_adj_pd = chen_like_weighted_assignment(
+        weighted_adj_pd = adapted_chen_like_weighted_assignment(
             self.animal,
             self.dataset_key,
             self.Lambda,
             self.gamma,
-            binary_adj_pd
+            sym_binary_adj_pd,
+            true_binary_adj_pd=binary_adj_pd,
+            shift=1e-6
         )
         self.simulation_results = {
             'CCMe_model': weighted_adj_pd,
         }
+
+        self.check_fig(binary_adj_pd, weighted_adj_pd)
 # endregion
 
 
@@ -4136,12 +4177,12 @@ def performance_heatmap(ax_list, different_model_performance_dict, only_show_ani
         animal = animal_and_dataset_key.split('_')[0]
         different_model_performance_df = pd.DataFrame(local_performance_dict)
         
-        if animal in ['mouse', 'macaque']:
-            molnar_performance = get_molnar_performance(animal=animal, dataset_key='gamanut' if animal=='mouse' else 'markov29')
-            for k, v in molnar_performance.items():
-                RMAE = v['RMAE']
-                different_model_performance_df.loc[f'accuracy_{k}', 'molnar'] = 1 - RMAE
-            different_model_performance_df.loc['correlation', 'molnar'] = np.nan  # Molnár et al.没有提供correlation指标
+        # if animal in ['mouse', 'macaque']:
+        #     molnar_performance = get_molnar_performance(animal=animal, dataset_key='gamanut' if animal=='mouse' else 'markov29')
+        #     for k, v in molnar_performance.items():
+        #         RMAE = v['RMAE']
+        #         different_model_performance_df.loc[f'accuracy_{k}', 'molnar'] = 1 - RMAE
+        #     different_model_performance_df.loc['correlation', 'Molnár et al. 2024'] = np.nan  # Molnár et al.没有提供correlation指标
         
         if show_accuracy_list is not None:
             different_model_performance_df = cf.get_sub_df(different_model_performance_df, row_list=show_accuracy_list)
@@ -4158,8 +4199,23 @@ def performance_heatmap(ax_list, different_model_performance_dict, only_show_ani
         cf.set_ax(ax, xlabel='Model Type', ylabel='', title=title)
 
 
+def performance_bar(ax, performance_dict, performance_metric='correlation'):
+    swaped_performance_dict = cf.swap_dict_level(performance_dict, {0: 1, 1: 0})
+    animal_list = []
+    model_performance_list = []
+    for animal_and_dataset_key in swaped_performance_dict.keys():
+        animal = animal_and_dataset_key.split('_')[0]
+        animal_list.append(animal)
+        model_performance_list.append([])
+        for model_type in swaped_performance_dict[animal_and_dataset_key].keys():
+            performance_value = swaped_performance_dict[animal_and_dataset_key][model_type][performance_metric]
+            model_performance_list[-1].append(performance_value)
+    cf.plt_group_bar(ax, animal_list, model_performance_list, label_list=list(swaped_performance_dict[animal_and_dataset_key].keys()), inner_gap=0.5, width=0.06)
+    cf.set_ax(ax, xlabel='Species', ylabel=performance_metric.capitalize(), ylim=[0.2, None], tick_size=cf.LABEL_SIZE, xtick_size=cf.LABEL_SIZE, legend_size=cf.LABEL_SIZE, legend_loc='lower right', bbox_to_anchor=(1., 0.9), legend_kwargs={'ncol': 2})
+
+
 class PaperFigCompareModel:
-    def __init__(self, model_timedir_list_UAR_EDR, model_timedir_list_song, model_timedir_list_area_EDR_3d, model_timedir_list_betzel_like):
+    def __init__(self, model_timedir_list_UAR_EDR, model_timedir_list_song, model_timedir_list_area_EDR_3d, model_timedir_list_betzel_like, model_timedir_list_adapted_betzel_like):
         self.animal_list = ['mouse', 'marmoset', 'macaque', 'human']
         self.dataset_key_list = ['gamanut', 'majka', 'markov40', 'lariviere']
         self.animal_num = len(self.animal_list)
@@ -4171,11 +4227,13 @@ class PaperFigCompareModel:
         self.model_timedir_list_song = model_timedir_list_song
         self.model_timedir_list_area_EDR_3d = model_timedir_list_area_EDR_3d
         self.model_timedir_list_betzel_like = model_timedir_list_betzel_like
+        # self.model_timedir_list_adapted_betzel_like = model_timedir_list_adapted_betzel_like
 
         self.multi_visualizer_UAR_EDR = MultiCaseVisualizer(self.animal_list, self.dataset_key_list, self.model_timedir_list_UAR_EDR)
         self.multi_visualizer_song = MultiCaseVisualizer(self.animal_list, self.dataset_key_list, self.model_timedir_list_song)
         self.multi_visualizer_area_EDR_3d = MultiCaseVisualizer(self.animal_list, self.dataset_key_list, self.model_timedir_list_area_EDR_3d)
         self.multi_visualizer_betzel_like = MultiCaseVisualizer(self.animal_list, self.dataset_key_list, self.model_timedir_list_betzel_like)
+        # self.multi_visualizer_adapted_betzel_like = MultiCaseVisualizer(self.animal_list, self.dataset_key_list, self.model_timedir_list_adapted_betzel_like)
 
     def get_performance(self):
         if not self.force_re_compute:
@@ -4183,7 +4241,10 @@ class PaperFigCompareModel:
                 different_model_performance_dict = cf.load_dict(self.figdir+'/different_model_performance_dict/different_model_performance_dict')
                 return different_model_performance_dict
         different_model_performance_dict = {}
-        model_types = ['UAR_EDR', 'song', 'area_EDR_3d', 'betzel_like']
+        # model_types = ['UAR_EDR', 'song', 'area_EDR_3d', 'betzel_like', 'adapted_betzel_like']
+        # multi_visualizers = [self.multi_visualizer_UAR_EDR, self.multi_visualizer_song, self.multi_visualizer_area_EDR_3d, self.multi_visualizer_betzel_like, self.multi_visualizer_adapted_betzel_like]
+        # model_types = ['UAR & EDR (ours)', 'Attractive Force (adapted from Song et al. 2014)', 'Area-level 3D EDR (adapted from Ercsey-Ravasz et al. 2013)', 'Geometry & Topology (adapted from Betzel et al. 2016)']
+        model_types = ['UAR & EDR', 'Attractive Force', 'Area-level 3D EDR', 'Geometry & Topology']
         multi_visualizers = [self.multi_visualizer_UAR_EDR, self.multi_visualizer_song, self.multi_visualizer_area_EDR_3d, self.multi_visualizer_betzel_like]
 
         for model_type, multi_visualizer in zip(model_types, multi_visualizers):
@@ -4213,4 +4274,12 @@ class PaperFigCompareModel:
         fig, ax = cf.get_fig_ax(ncols=4, margin=cf.MARGIN.copy().update({'left': 0.1, 'right': 0.7}))
         performance_heatmap(ax, different_model_performance_dict, only_show_animal=True, show_accuracy_list=['correlation', 'accuracy_strong', 'accuracy_medium_strong', 'accuracy_weak_medium', 'accuracy_weak'], accuracy_key_to_label_in_fig_dict={'correlation': 'corr', 'accuracy_strong': 'acc_strong', 'accuracy_medium_strong': 'acc_med_strong', 'accuracy_weak_medium': 'acc_weak_med', 'accuracy_weak': 'acc_weak'})
         cf.save_fig(fig, cf.pj(self.figdir, 'performance_heatmap_selected'), bbox_inches='tight')
+
+    def performance_bar_plot(self):
+        different_model_performance_dict = self.get_performance()
+
+        fig, ax = cf.get_fig_ax(ncols=4)
+        ax = cf.merge_ax(ax)
+        performance_bar(ax, different_model_performance_dict, performance_metric='correlation')
+        cf.save_fig(fig, cf.pj(self.figdir, 'performance_bar_plot_correlation'), bbox_inches='tight')
 # endregion

@@ -10,8 +10,24 @@ from itertools import product
 
 
 def get_Lambda_range(animal, dataset_key):
-    optimal_params = cf.load_dict('../../results/optimal_params_area_EDR_3d/optimal_params_area_EDR_3d')
-    return [optimal_params[cf.cat(animal, dataset_key)]['Lambda']]
+    animal_info = uf.AnimalInfo(animal=animal, dataset_key=dataset_key)
+    distance_3D = animal_info.distance_3D
+    max_distance = np.max(distance_3D.values)
+    if animal == 'mouse' and dataset_key == 'gamanut':
+        Lambda_range = [np.linspace(0.1, max_distance/2, 30)]
+    elif animal == 'marmoset' and dataset_key == 'majka':
+        Lambda_range = [np.linspace(0.5, max_distance/2, 30)]
+    elif animal == 'macaque' and dataset_key == 'markov40':
+        Lambda_range = [np.linspace(0.5, max_distance/2, 30)]
+    elif animal == 'human' and dataset_key == 'lariviere':
+        Lambda_range = [np.linspace(5., max_distance/2, 30)]
+    elif animal == 'marmoset' and dataset_key == 'V4':
+        Lambda_range = [np.linspace(0.5, max_distance/2, 30)]
+    else:
+        raise ValueError('Unknown animal and dataset_key combination')
+    Lambda_range = np.concatenate(Lambda_range)
+    Lambda_range = np.unique(Lambda_range)
+    return Lambda_range
 
 
 def get_gamma_range():

@@ -21,7 +21,7 @@ def get_Lambda_range(animal, dataset_key):
     elif animal == 'macaque' and dataset_key == 'markov40':
         Lambda_range = [np.linspace(0.5, max_distance/2, num)]
     elif animal == 'human' and dataset_key == 'lariviere':
-        Lambda_range = [np.linspace(1., max_distance/2, num)]
+        Lambda_range = [np.linspace(5., max_distance/2, num)]
     elif animal == 'marmoset' and dataset_key == 'V4':
         Lambda_range = [np.linspace(0.5, max_distance/2, num)]
     else:
@@ -33,7 +33,8 @@ def get_Lambda_range(animal, dataset_key):
 
 def get_gamma_range():
     # return np.linspace(-2., 2.0, 21)
-    return np.linspace(-2., 2.0, 10)
+    # return np.linspace(-2., 2.0, 10)
+    return [0.4] # use the optimal gamma in the paper
 
 
 def get_seed_range():

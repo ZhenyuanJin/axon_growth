@@ -19,7 +19,7 @@ def get_Lambda_range(animal, dataset_key):
     elif animal == 'macaque' and dataset_key == 'markov40':
         Lambda_range = [np.linspace(0.5, max_distance/2, 30)]
     elif animal == 'human' and dataset_key == 'lariviere':
-        Lambda_range = [np.linspace(1., max_distance/2, 30)]
+        Lambda_range = [np.linspace(5., max_distance/2, 30)]
     elif animal == 'marmoset' and dataset_key == 'V4':
         Lambda_range = [np.linspace(0.5, max_distance/2, 30)]
     else:
