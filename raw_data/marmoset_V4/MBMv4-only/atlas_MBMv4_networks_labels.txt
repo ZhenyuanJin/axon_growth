@@ -1,0 +1,15 @@
+1	ventral somatomotor
+2	dorsal somatomotor
+3	frontal pole
+4	the parahippocampus/temporal pole
+5	orbital frontal
+6	auditory and insular cortex (salience-related)
+7	frontoparietal-like network
+8	default-mode-like network
+9	visual-related network: medial primary visual and MT/MST
+10	visual-related network: lateral primary visual and MT/MST
+11	visual-related network: high-level 1
+12	visual-related network: high-level 2
+13	visual-related network: high-level 3
+14	anterior cingulate cortex (salience-related)
+15	premotor
