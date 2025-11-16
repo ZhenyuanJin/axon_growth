@@ -2908,7 +2908,7 @@ def draw_mask_for_unmeasured_block(ax, animal, dataset_key):
     cf.sns_heatmap(ax, unmeasured_matrix, show_xtick=False, show_ytick=False, cmap=cmap, cbar=False)
 
 
-def visualize_connection_matrix_heatmap(ax_data, ax_model, matrix_data, matrix_model, animal, dataset_key, log_matrix=False, topo=False):
+def visualize_connection_matrix_heatmap(ax_data, ax_model, matrix_data, matrix_model, animal, dataset_key, log_matrix=False, topo=False, show_correlation=True):
     '''
     log_matrix: 是否对矩阵取log
     topo: 是否将矩阵转化为拓扑矩阵
@@ -2966,8 +2966,9 @@ def visualize_connection_matrix_heatmap(ax_data, ax_model, matrix_data, matrix_m
     cf.set_ax(ax_data, title='Data', xlabel='Target', ylabel='Source')
     cf.set_ax(ax_model, title='Model', xlabel='Target', ylabel='Source')
 
-    corr = data_model_correlation(SC_data=local_matrix_data, SC_model=local_matrix_model, animal=animal, dataset_key=dataset_key, diagonal=False)
-    cf.add_text(ax_model, x=0.5, y=1.25, text='Corr='+str(round(corr, 3)), va='center', ha='center', fontsize=cf.LABEL_SIZE)
+    if show_correlation:
+        corr = data_model_correlation(SC_data=local_matrix_data, SC_model=local_matrix_model, animal=animal, dataset_key=dataset_key, diagonal=False)
+        cf.add_text(ax_model, x=0.5, y=1.25, text='Corr='+str(round(corr, 3)), va='center', ha='center', fontsize=cf.LABEL_SIZE)
 
 
 def visualize_distribution_repeated_by_SC(ax, some_property, SC, minimal_tol=None, distribution_type='CDF', distribution_kwargs=None):
@@ -3147,8 +3148,8 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
     def vector_field(self, ax):
         pass
 
-    def data_model_SC(self, ax_model, ax_data, topo=False):
-        visualize_connection_matrix_heatmap(ax_data, ax_model, matrix_data=self.SC_data, matrix_model=self.SC_model, animal=self.animal, dataset_key=self.dataset_key, log_matrix=False, topo=topo)
+    def data_model_SC(self, ax_model, ax_data, topo=False, show_correlation=True):
+        visualize_connection_matrix_heatmap(ax_data, ax_model, matrix_data=self.SC_data, matrix_model=self.SC_model, animal=self.animal, dataset_key=self.dataset_key, log_matrix=False, topo=topo, show_correlation=show_correlation)
 
     def area_level_performance(self, ax, performance_metric='correlation', sort=True, SC_data=None, SC_model=None, diagonal=False):
         if SC_data is None:
@@ -3723,7 +3724,7 @@ class PaperFig:
 
         cf.save_fig(fig, self.figdir+'/fig_1_version2', **self.save_fig_kwargs)
 
-    def fig_1(self):
+    def fig_1_version3(self):
         '''
         生成模型示意图
         '''
@@ -3786,6 +3787,140 @@ class PaperFig:
         for area, polygon in polygon_dict.items():
             points = generate_random_point_in_polygon(polygon, density=point_density, seed=0)
             cf.plt_scatter(ax, points[:, 0], points[:, 1], color=split_color_dict[area], s=s, zorder=-1)
+
+        cf.save_fig(fig, self.figdir+'/fig_1_version3', **self.save_fig_kwargs)
+    
+    def fig_1(self):
+        '''
+        生成模型示意图
+        '''
+        animal = 'marmoset'
+        dataset_key = 'majka'
+        animal_info = AnimalInfo(animal, dataset_key)
+        polygon_dict = animal_info.polygon_dict
+        full_name = animal_info.full_name
+        area_center_dict = animal_info.area_center_dict
+        whole_cortex_polygon = animal_info.whole_cortex_polygon
+        point_density = 15
+        Lambda = 2
+        exp_x = np.linspace(0, 10, 1000)
+        exp_y = np.exp(-exp_x/Lambda)/Lambda
+        uniform_x = np.linspace(-np.pi, np.pi, 1000)
+        uniform_y = np.ones(uniform_x.shape) / (2*np.pi)
+        margin = cf.COMPACT_MARGIN
+        margin['top'] = 0.87
+        margin['bottom'] = 0.13
+
+        fig, axes = cf.get_fig_ax(ncols=3, nrows=2, margin=cf.COMPACT_MARGIN, ax_width=cf.AX_WIDTH*1.1, ax_height=cf.AX_HEIGHT*1.1)
+
+        ax_dict = {}
+        ax_dict['a'] = axes[0, 0]
+        ax_dict['b'] = axes[0, 1]
+        ax_dict['c'] = axes[0, 2]
+        ax_dict['d'] = axes[1, 0]
+        ax_dict['e'] = axes[1, 1]
+        ax_dict['f'] = axes[1, 2]
+
+        cf.add_axes_dict_tag(axes_dict=ax_dict, ref_ax=axes[0, 0])
+
+        ax = ax_dict['a']
+        cf.set_ax(ax, title='Cortical surface')
+        show_whole_cortex_boundary(ax, animal, dataset_key)
+
+        ax = ax_dict['b']
+        cf.set_ax(ax, title='Neuron generation')
+        show_whole_cortex_boundary(ax, animal, dataset_key)
+        s = cf.get_suitable_s(ax, num=int(point_density*whole_cortex_polygon.area)) / 10
+        for area, polygon in polygon_dict.items():
+            points = generate_random_point_in_polygon(polygon, density=point_density, seed=0)
+            cf.plt_scatter(ax, points[:, 0], points[:, 1], color=cf.GRAY, s=s, zorder=-1, alpha=0.5)
+
+        ax = ax_dict['c']
+        cf.set_ax(ax, title='Connection generation methodology')
+        cf.add_text(ax, text='$\\theta \sim \mathrm{Uniform}(-\pi, \pi)$', x=0.5, y=0., va='center', ha='center', fontsize=cf.LABEL_SIZE)
+        cf.add_text(ax, text='$d \sim \mathrm{Exponential}(\\Lambda)$', x=0.5, y=-0.08, va='center', ha='center', fontsize=cf.LABEL_SIZE, text_process={'capitalize': False})
+        show_whole_cortex_boundary(ax, animal, dataset_key)
+
+        # s = cf.get_suitable_s(ax, num=int(point_density*whole_cortex_polygon.area)) / 10
+        # for area, polygon in polygon_dict.items():
+        #     points = generate_random_point_in_polygon(polygon, density=point_density, seed=0)
+        #     cf.plt_scatter(ax, points[:, 0], points[:, 1], color=cf.GRAY, s=s, zorder=-1, alpha=0.5)
+        
+        for source_point, angle, distance in zip([[-8.2,  1.6]], [45 / (180) * np.pi], [Lambda * 5]):
+            target_point = source_point + np.array([np.cos(angle) * distance, np.sin(angle) * distance])
+            cf.plt_scatter(ax, [source_point[0]], [source_point[1]], color=cf.BLACK, s=50, zorder=1)
+            cf.add_arrow(ax, x_start=source_point[0], y_start=source_point[1], x_end=target_point[0], y_end=target_point[1], fc=cf.BLACK, ec=cf.BLACK)
+            cf.add_arc_patch(ax, source_point, distance * 0.3, 0, angle, facecolor=cf.BLACK, edgecolor=cf.BLACK)
+            cf.plt_line(ax, [source_point[0], source_point[0] + distance], [source_point[1], source_point[1]], color=cf.BLACK, linestyle='--')
+            cf.add_text(ax, text='$\\theta$', x=source_point[0] + np.cos(angle/2) * distance * 0.4, y=source_point[1] + np.sin(angle/2) * distance * 0.4, va='center', ha='center', transform='data', fontsize=cf.LABEL_SIZE)
+            cf.add_text(ax, text='d', x=(source_point[0] + target_point[0])/2, y=(source_point[1] + target_point[1])/2, va='bottom', ha='right', transform='data', text_process={'capitalize': False}, fontsize=cf.LABEL_SIZE)
+
+        ax = ax_dict['d']
+        cf.set_ax(ax, title='Atlas registration')
+        show_area_boundary(ax, animal, dataset_key)
+        for source_point, angle, distance in zip([[-8.2,  1.6], [4., 3.5], [-5., 3.]], [45 / (180) * np.pi, 230 / (180) * np.pi, 270 / (180) * np.pi], [Lambda * 5, Lambda * 3, Lambda * 7]):
+            target_point = source_point + np.array([np.cos(angle) * distance, np.sin(angle) * distance])
+            cf.add_arrow(ax, x_start=source_point[0], y_start=source_point[1], x_end=target_point[0], y_end=target_point[1], fc=cf.BLACK, ec=cf.BLACK)
+
+        # colors = cf.get_random_color(n=len(full_name), cmap=cf.HEATMAP_CMAP, seed=3)
+        colors = cf.get_plt_color(n=len(full_name))
+        color_dict = cf.create_dict(full_name, colors)
+        split_color_dict = broadcast_value_to_split_area(color_dict, animal, dataset_key)
+
+        s = cf.get_suitable_s(ax, num=int(point_density*whole_cortex_polygon.area)) / 10
+        for area, polygon in polygon_dict.items():
+            points = generate_random_point_in_polygon(polygon, density=point_density, seed=0)
+            cf.plt_scatter(ax, points[:, 0], points[:, 1], color=split_color_dict[area], s=s, zorder=-1)
+        
+        ax = ax_dict['e']
+        cf.rm_ax_axis(ax)
+        cf.set_ax(ax, title='Connection matrix (model)')
+        left, right, bottom, top = cf.get_ax_position_custom(ax)
+        width = right - left
+        height = top - bottom
+        ax_model = cf.add_ax(fig, left=left+width*0.1, right=right-width*0.1, bottom=bottom+height*0.1, top=top-height*0.1)
+        # data = np.random.randint(0, 5, size=(5, 5))
+        # cf.sns_heatmap(ax, data, cmap=cf.DENSITY_CMAP, cbar=False, show_xtick=False, show_ytick=False)
+        
+        ax = ax_dict['f']
+        cf.rm_ax_axis(ax)
+        cf.set_ax(ax, title='Connection matrix (data)')
+        left, right, bottom, top = cf.get_ax_position_custom(ax)
+        width = right - left
+        height = top - bottom
+        ax_data = cf.add_ax(fig, left=left+width*0.1, right=right-width*0.1, bottom=bottom+height*0.1, top=top-height*0.1)
+        
+        single_visualizer = self.multi_visualizer.get_single_visualizer(cf.cat(animal, dataset_key))
+
+        single_visualizer.data_model_SC(ax_data=ax_data, ax_model=ax_model, show_correlation=False)
+        ax_data.set_title('')
+        ax_model.set_title('')
+
+        padding_between_ax = cf.get_ax_position_custom(ax_data)[0] - cf.get_ax_position_custom(ax_model)[0]
+        # cf.add_double_arrow(ax_model, x_start=0.3, y_start=-0.2, x_end=1.3+padding_between_ax, y_end=-0.2, xycoords='axes fraction', color=cf.BLACK)
+        from matplotlib.patches import ConnectionPatch
+        start = (0.25, -0.02)
+        end = (1.35 + padding_between_ax, -0.02)
+        connection = ConnectionPatch(
+            xyA=start, xyB=end,
+            coordsA="axes fraction", coordsB="axes fraction",
+            arrowstyle="->,head_width=0.5,head_length=0.8",
+            shrinkA=0, shrinkB=0,
+            linewidth=cf.LINE_WIDTH,
+            color=cf.BLACK,
+            connectionstyle="arc3,rad=0.4"
+        )
+        ax_model.add_artist(connection)
+        connection = ConnectionPatch(
+            xyA=end, xyB=start,
+            coordsA="axes fraction", coordsB="axes fraction",
+            arrowstyle="->,head_width=0.5,head_length=0.8",
+            shrinkA=0, shrinkB=0,
+            linewidth=cf.LINE_WIDTH,
+            color=cf.BLACK,
+            connectionstyle="arc3,rad=-0.4"
+        )
+        ax_model.add_artist(connection)
 
         cf.save_fig(fig, self.figdir+'/fig_1', **self.save_fig_kwargs)
 
