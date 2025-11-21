@@ -2836,6 +2836,167 @@ def show_value_on_flatmap(ax, animal, dataset_key, value_dict, cmap, cbar_label=
         ax.set_ylim(new_ylim)
 
 
+def show_area_centers_on_flatmap(ax, animal, dataset_key, color=cf.BLACK, s=80, mode='only_largest'):
+    '''
+    在flatmap上显示脑区中心点
+    '''
+    animal_info = AnimalInfo(animal, dataset_key)
+    area_center_dict = animal_info.area_center_dict
+
+    if mode == 'only_largest':
+        # 只显示每个脑区中面积最大的split的中心点
+        filtered_area_center_dict = {}
+        for area in animal_info.full_name:
+            max_split = None
+            max_area = 0
+            for spilit_area in animal_info.name_to_split_name_dict[area]:
+                spilit_area_size = animal_info.polygon_dict[spilit_area].area
+                if spilit_area_size > max_area:
+                    max_area = spilit_area_size
+                    max_split = spilit_area
+            filtered_area_center_dict[max_split] = area_center_dict[max_split]
+        for area, center in filtered_area_center_dict.items():
+            cf.plt_scatter(ax, x=center[0], y=center[1], color=color, s=s)
+    else:
+        for area, center in area_center_dict.items():
+            cf.plt_scatter(ax, x=center[0], y=center[1], color=color, s=s)
+
+
+def show_connection_on_flatmap(ax, animal, dataset_key, SC, show_area_name=False, text_fontsize=cf.FONT_SIZE/3, vmin=0.001, vmax=0.2, edgecolor=cf.BLACK, set_xylim=True, selected_target_area_list=None, top_edges=0.1, mode='global'):
+    """
+    在flatmap上显示连接
+    
+    Parameters:
+    -----------
+    mode : str
+        'global' - 全局筛选top_edges
+        'per_target' - 对每个target脑区单独筛选top_edges
+    top_edges : float, int, dict or list
+        根据mode不同有不同的含义
+        - mode='global'时: 可以是比例(0-1)或具体数量
+        - mode='per_target'时: 
+            * 如果是float: 对每个target脑区使用相同的比例
+            * 如果是int: 对每个target脑区使用相同的数量
+            * 如果是dict: {target_area: value} 为每个脑区指定不同的值
+            * 如果是list: 按顺序为每个脑区指定值,长度需与selected_target_area_list相同
+    """
+    animal_info = AnimalInfo(animal, dataset_key)
+    show_area_boundary(ax, animal, dataset_key, show_area_name=show_area_name, text_fontsize=text_fontsize, edgecolor=edgecolor, set_xylim=set_xylim)
+    show_area_centers_on_flatmap(ax, animal, dataset_key, color=cf.BLACK, mode='only_largest')
+
+    new_max = cf.LINE_WIDTH * 1.0
+    new_min = cf.LINE_WIDTH * 0.05
+
+    # 收集所有连接的权重
+    connections = []
+    area_center_dict = animal_info.area_center_dict
+    
+    for area in selected_target_area_list:
+        for source_area in animal_info.source_name:
+            weight = SC.loc[source_area, area]
+            if weight > 0:
+                connections.append((source_area, area, weight))
+    
+    # 根据mode和top_edges参数筛选连接
+    if top_edges is not None:
+        if mode == 'global':
+            # 全局模式：按权重降序排序，筛选top_edges
+            connections.sort(key=lambda x: x[2], reverse=True)
+            
+            if 0 < top_edges <= 1:  # 如果是比例
+                n_edges = int(len(connections) * top_edges)
+            else:  # 如果是具体数量
+                n_edges = int(top_edges)
+            
+            # 确保不超过连接总数
+            n_edges = min(n_edges, len(connections))
+            connections = connections[:n_edges]
+            
+        elif mode == 'per_target':
+            # 对每个target脑区单独筛选
+            filtered_connections = []
+            
+            for target_area in selected_target_area_list:
+                # 获取该target脑区的所有连接
+                target_connections = [conn for conn in connections if conn[1] == target_area]
+                if not target_connections:
+                    continue
+                    
+                # 按权重降序排序
+                target_connections.sort(key=lambda x: x[2], reverse=True)
+                
+                # 确定该脑区要保留的连接数量
+                if isinstance(top_edges, (int, float)):
+                    # 统一值：float为比例，int为数量
+                    if 0 < top_edges <= 1:
+                        n_edges = int(len(target_connections) * top_edges)
+                    else:
+                        n_edges = int(top_edges)
+                elif isinstance(top_edges, dict):
+                    # 字典：为每个脑区指定不同的值
+                    if target_area in top_edges:
+                        edge_value = top_edges[target_area]
+                        if 0 < edge_value <= 1:
+                            n_edges = int(len(target_connections) * edge_value)
+                        else:
+                            n_edges = int(edge_value)
+                    else:
+                        n_edges = len(target_connections)  # 未指定的脑区保留所有连接
+                elif isinstance(top_edges, list):
+                    # 列表：按顺序指定
+                    idx = selected_target_area_list.index(target_area)
+                    if idx < len(top_edges):
+                        edge_value = top_edges[idx]
+                        if 0 < edge_value <= 1:
+                            n_edges = int(len(target_connections) * edge_value)
+                        else:
+                            n_edges = int(edge_value)
+                    else:
+                        n_edges = len(target_connections)
+                else:
+                    n_edges = len(target_connections)
+                
+                # 确保不超过该脑区的连接总数
+                n_edges = max(1, min(n_edges, len(target_connections)))
+                filtered_connections.extend(target_connections[:n_edges])
+            
+            connections = filtered_connections
+    
+    # 绘制筛选后的连接
+    for source_area, area, weight in connections:
+        # 找到source_area中面积最大的split
+        max_source_split = None
+        max_source_area = 0
+        for spilit_source_area in animal_info.name_to_split_name_dict[source_area]:
+            spilit_source_area_size = animal_info.polygon_dict[spilit_source_area].area
+            if spilit_source_area_size > max_source_area:
+                max_source_area = spilit_source_area_size
+                max_source_split = spilit_source_area
+        
+        # 找到area中面积最大的split
+        max_area_split = None
+        max_area_size = 0
+        for spilit_area in animal_info.name_to_split_name_dict[area]:
+            spilit_area_size = animal_info.polygon_dict[spilit_area].area
+            if spilit_area_size > max_area_size:
+                max_area_size = spilit_area_size
+                max_area_split = spilit_area
+        
+        # 只绘制最大面积split之间的连接
+        if max_source_split and max_area_split:
+            start = area_center_dict[max_source_split]
+            end = area_center_dict[max_area_split]
+            
+            if weight >= vmax:
+                linewidth = new_max
+            elif weight <= vmin:
+                linewidth = 0.  # clipped
+            else:
+                linewidth = cf.scale_to_new_range(data=weight, old_min=vmin, old_max=vmax, new_min=new_min, new_max=new_max)
+            
+            cf.plt_line(ax, x=[start[0], end[0]], y=[start[1], end[1]], color=cf.BLACK, linewidth=linewidth, alpha=0.7)
+
+
 def show_area_boundary(ax, animal, dataset_key, show_area_name=False, text_fontsize=cf.FONT_SIZE/3, edgecolor=cf.BLACK, set_xylim=True):
     '''
     在flatmap上画出脑区边界
@@ -3144,6 +3305,17 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         
         show_value_on_flatmap(ax, animal=self.animal, dataset_key=self.dataset_key, value_dict=value_dict, cmap=cmap, cbar_label='SC', source=source, target=target, vmax=vmax, **show_value_on_flatmap_kwargs)
         cf.set_ax(ax, title=data_or_model+'\n'+which_area)
+
+    def connection_by_arrows_on_flatmap(self, ax, data_or_model, selected_target_area_list, show_area_name=False, text_fontsize=cf.FONT_SIZE/3, show_connection_on_flatmap_kwargs=None):
+        if data_or_model == 'model':
+            # SC = self.SC_model_masked
+            SC = self.SC_model
+        elif data_or_model == 'data':
+            SC = self.SC_data
+
+        show_connection_on_flatmap_kwargs = cf.update_dict({}, show_connection_on_flatmap_kwargs)
+        show_connection_on_flatmap(ax, animal=self.animal, dataset_key=self.dataset_key, SC=SC, selected_target_area_list=selected_target_area_list, show_area_name=show_area_name, text_fontsize=text_fontsize, **show_connection_on_flatmap_kwargs, edgecolor=(0, 0, 0, 0.3))
+        cf.set_ax(ax, title=data_or_model)
 
     def vector_field(self, ax):
         pass
@@ -3790,7 +3962,7 @@ class PaperFig:
 
         cf.save_fig(fig, self.figdir+'/fig_1_version3', **self.save_fig_kwargs)
     
-    def fig_1(self):
+    def fig_1_version4(self):
         '''
         生成模型示意图
         '''
@@ -3811,7 +3983,7 @@ class PaperFig:
         margin['top'] = 0.87
         margin['bottom'] = 0.13
 
-        fig, axes = cf.get_fig_ax(ncols=3, nrows=2, margin=cf.COMPACT_MARGIN, ax_width=cf.AX_WIDTH*1.1, ax_height=cf.AX_HEIGHT*1.1)
+        fig, axes = cf.get_fig_ax(ncols=3, nrows=2, margin=cf.COMPACT_MARGIN, ax_width=cf.AX_WIDTH*1.15, ax_height=cf.AX_HEIGHT*1.15)
 
         ax_dict = {}
         ax_dict['a'] = axes[0, 0]
@@ -3921,6 +4093,186 @@ class PaperFig:
             connectionstyle="arc3,rad=-0.4"
         )
         ax_model.add_artist(connection)
+
+        cf.save_fig(fig, self.figdir+'/fig_1_version4', **self.save_fig_kwargs)
+
+    def fig_1_version5(self):
+        '''
+        生成模型示意图
+        '''
+        animal = 'marmoset'
+        dataset_key = 'majka'
+        animal_info = AnimalInfo(animal, dataset_key)
+        polygon_dict = animal_info.polygon_dict
+        full_name = animal_info.full_name
+        area_center_dict = animal_info.area_center_dict
+        whole_cortex_polygon = animal_info.whole_cortex_polygon
+        point_density = 15
+        Lambda = 2
+        exp_x = np.linspace(0, 10, 1000)
+        exp_y = np.exp(-exp_x/Lambda)/Lambda
+        uniform_x = np.linspace(-np.pi, np.pi, 1000)
+        uniform_y = np.ones(uniform_x.shape) / (2*np.pi)
+        margin = cf.COMPACT_MARGIN
+        margin['top'] = 0.87
+        margin['bottom'] = 0.13
+
+        fig, axes = cf.get_fig_ax(ncols=3, nrows=2, margin=cf.COMPACT_MARGIN, ax_width=cf.AX_WIDTH*1.15, ax_height=cf.AX_HEIGHT*1.15)
+
+        ax_dict = {}
+        ax_dict['a'] = axes[0, 0]
+        ax_dict['b'] = axes[0, 1]
+        ax_dict['c'] = axes[0, 2]
+        ax_dict['d'] = axes[1, 0]
+        ax_dict['e'] = axes[1, 1]
+
+        cf.add_axes_dict_tag(axes_dict=ax_dict, ref_ax=axes[0, 0])
+
+        ax = ax_dict['a']
+        cf.set_ax(ax, title='Cortical surface')
+        show_whole_cortex_boundary(ax, animal, dataset_key)
+
+        ax = ax_dict['b']
+        cf.set_ax(ax, title='Neuron generation')
+        show_whole_cortex_boundary(ax, animal, dataset_key)
+        s = cf.get_suitable_s(ax, num=int(point_density*whole_cortex_polygon.area)) / 10
+        for area, polygon in polygon_dict.items():
+            points = generate_random_point_in_polygon(polygon, density=point_density, seed=0)
+            cf.plt_scatter(ax, points[:, 0], points[:, 1], color=cf.GRAY, s=s, zorder=-1, alpha=0.5)
+
+        ax = ax_dict['c']
+        cf.set_ax(ax, title='Connection generation methodology')
+        cf.add_text(ax, text='$\\theta \sim \mathrm{Uniform}(-\pi, \pi)$', x=0.5, y=0., va='center', ha='center', fontsize=cf.LABEL_SIZE)
+        cf.add_text(ax, text='$d \sim \mathrm{Exponential}(\\Lambda)$', x=0.5, y=-0.08, va='center', ha='center', fontsize=cf.LABEL_SIZE, text_process={'capitalize': False})
+        show_whole_cortex_boundary(ax, animal, dataset_key)
+
+        s = cf.get_suitable_s(ax, num=int(point_density*whole_cortex_polygon.area)) / 10
+        for area, polygon in polygon_dict.items():
+            points = generate_random_point_in_polygon(polygon, density=point_density, seed=0)
+            cf.plt_scatter(ax, points[:, 0], points[:, 1], color=cf.GRAY, s=s, zorder=-1, alpha=0.5)
+        
+        for source_point, angle, distance in zip([[-8.2,  1.6]], [45 / (180) * np.pi], [Lambda * 5]):
+            target_point = source_point + np.array([np.cos(angle) * distance, np.sin(angle) * distance])
+            cf.plt_scatter(ax, [source_point[0]], [source_point[1]], color=cf.BLACK, s=50, zorder=1)
+            cf.add_arrow(ax, x_start=source_point[0], y_start=source_point[1], x_end=target_point[0], y_end=target_point[1], fc=cf.BLACK, ec=cf.BLACK)
+            cf.add_arc_patch(ax, source_point, distance * 0.3, 0, angle, facecolor=cf.BLACK, edgecolor=cf.BLACK)
+            cf.plt_line(ax, [source_point[0], source_point[0] + distance], [source_point[1], source_point[1]], color=cf.BLACK, linestyle='--')
+            cf.add_text(ax, text='$\\theta$', x=source_point[0] + np.cos(angle/2) * distance * 0.4, y=source_point[1] + np.sin(angle/2) * distance * 0.4, va='center', ha='center', transform='data', fontsize=cf.LABEL_SIZE)
+            cf.add_text(ax, text='d', x=(source_point[0] + target_point[0])/2, y=(source_point[1] + target_point[1])/2, va='bottom', ha='right', transform='data', text_process={'capitalize': False}, fontsize=cf.LABEL_SIZE)
+
+        ax = ax_dict['d']
+        cf.set_ax(ax, title='Atlas registration')
+        show_area_boundary(ax, animal, dataset_key)
+        for source_point, angle, distance in zip([[-8.2,  1.6], [4., 3.5], [-5., 3.], [6.7, 2.5], [-13, 5.], [9.8, 6.], [10.5, 7.], [7., -4.], [0., -5.]], [45 / (180) * np.pi, 230 / (180) * np.pi, 270 / (180) * np.pi, 315 / (180) * np.pi, 10 / (180) * np.pi, 170 / (180) * np.pi, 120 / (180) * np.pi, -10 / (180) * np.pi, -30 / (180) * np.pi], [Lambda * 5, Lambda * 3, Lambda * 7, Lambda * 4, Lambda * 1.5, Lambda * 2.5, Lambda * 1.8, Lambda * 2.9, Lambda * 2.2]):
+            target_point = source_point + np.array([np.cos(angle) * distance, np.sin(angle) * distance])
+            cf.add_arrow(ax, x_start=source_point[0], y_start=source_point[1], x_end=target_point[0], y_end=target_point[1], fc=cf.BLACK, ec=cf.BLACK)
+
+        s = cf.get_suitable_s(ax, num=int(point_density*whole_cortex_polygon.area)) / 10
+        for area, polygon in polygon_dict.items():
+            points = generate_random_point_in_polygon(polygon, density=point_density, seed=0)
+            cf.plt_scatter(ax, points[:, 0], points[:, 1], color=cf.GREY, s=s, zorder=-1, alpha=0.5)
+        
+        ax_model = ax_dict['e']
+        single_visualizer = self.multi_visualizer.get_single_visualizer(cf.cat(animal, dataset_key))
+        selected_target_area_list = animal_info.source_name
+        single_visualizer.connection_by_arrows_on_flatmap(ax=ax_model, data_or_model='model', selected_target_area_list=selected_target_area_list)
+        ax_model.set_title('Area level connection')
+
+        cf.save_fig(fig, self.figdir+'/fig_1_version5', **self.save_fig_kwargs)
+
+    def fig_1(self):
+        '''
+        生成模型示意图
+        '''
+        animal = 'marmoset'
+        dataset_key = 'majka'
+        animal_info = AnimalInfo(animal, dataset_key)
+        polygon_dict = animal_info.polygon_dict
+        full_name = animal_info.full_name
+        area_center_dict = animal_info.area_center_dict
+        whole_cortex_polygon = animal_info.whole_cortex_polygon
+        point_density = 15
+        Lambda = 2
+        exp_x = np.linspace(0, 10, 1000)
+        exp_y = np.exp(-exp_x/Lambda)/Lambda
+        uniform_x = np.linspace(-np.pi, np.pi, 1000)
+        uniform_y = np.ones(uniform_x.shape) / (2*np.pi)
+        margin = cf.COMPACT_MARGIN
+        margin['top'] = 0.87
+        margin['bottom'] = 0.13
+
+        fig, axes = cf.get_fig_ax(ncols=3, nrows=2, margin=cf.COMPACT_MARGIN, ax_width=cf.AX_WIDTH*1.15, ax_height=cf.AX_HEIGHT*1.15)
+
+        ax_dict = {}
+        ax_dict['a'] = axes[0, 0]
+        ax_dict['b'] = axes[0, 1]
+        ax_dict['c'] = axes[0, 2]
+        ax_dict['d'] = axes[1, 0]
+        ax_dict['e'] = axes[1, 1]
+        ax_dict['f'] = axes[1, 2]
+
+        cf.add_axes_dict_tag(axes_dict=ax_dict, ref_ax=axes[0, 0])
+
+        ax = ax_dict['a']
+        cf.set_ax(ax, title='Cortical surface')
+        show_whole_cortex_boundary(ax, animal, dataset_key)
+
+        ax = ax_dict['b']
+        cf.set_ax(ax, title='Neuron generation')
+        show_whole_cortex_boundary(ax, animal, dataset_key)
+        s = cf.get_suitable_s(ax, num=int(point_density*whole_cortex_polygon.area)) / 10
+        for area, polygon in polygon_dict.items():
+            points = generate_random_point_in_polygon(polygon, density=point_density, seed=0)
+            cf.plt_scatter(ax, points[:, 0], points[:, 1], color=cf.GRAY, s=s, zorder=-1, alpha=0.5)
+
+        ax = ax_dict['c']
+        cf.set_ax(ax, title='Connection generation methodology')
+        cf.add_text(ax, text='$\\theta \sim \mathrm{Uniform}(-\pi, \pi)$', x=0.5, y=0., va='center', ha='center', fontsize=cf.LABEL_SIZE)
+        cf.add_text(ax, text='$d \sim \mathrm{Exponential}(\\Lambda)$', x=0.5, y=-0.08, va='center', ha='center', fontsize=cf.LABEL_SIZE, text_process={'capitalize': False})
+        show_whole_cortex_boundary(ax, animal, dataset_key)
+
+        s = cf.get_suitable_s(ax, num=int(point_density*whole_cortex_polygon.area)) / 10
+        for area, polygon in polygon_dict.items():
+            points = generate_random_point_in_polygon(polygon, density=point_density, seed=0)
+            cf.plt_scatter(ax, points[:, 0], points[:, 1], color=cf.GRAY, s=s, zorder=-1, alpha=0.5)
+        
+        for source_point, angle, distance in zip([[-8.2,  1.6]], [45 / (180) * np.pi], [Lambda * 5]):
+            target_point = source_point + np.array([np.cos(angle) * distance, np.sin(angle) * distance])
+            cf.plt_scatter(ax, [source_point[0]], [source_point[1]], color=cf.BLACK, s=50, zorder=1)
+            cf.add_arrow(ax, x_start=source_point[0], y_start=source_point[1], x_end=target_point[0], y_end=target_point[1], fc=cf.BLACK, ec=cf.BLACK)
+            cf.add_arc_patch(ax, source_point, distance * 0.3, 0, angle, facecolor=cf.BLACK, edgecolor=cf.BLACK)
+            cf.plt_line(ax, [source_point[0], source_point[0] + distance], [source_point[1], source_point[1]], color=cf.BLACK, linestyle='--')
+            cf.add_text(ax, text='$\\theta$', x=source_point[0] + np.cos(angle/2) * distance * 0.4, y=source_point[1] + np.sin(angle/2) * distance * 0.4, va='center', ha='center', transform='data', fontsize=cf.LABEL_SIZE)
+            cf.add_text(ax, text='d', x=(source_point[0] + target_point[0])/2, y=(source_point[1] + target_point[1])/2, va='bottom', ha='right', transform='data', text_process={'capitalize': False}, fontsize=cf.LABEL_SIZE)
+
+        ax = ax_dict['d']
+        cf.set_ax(ax, title='Connection generation')
+        show_whole_cortex_boundary(ax, animal, dataset_key)
+        for source_point, angle, distance in zip([[-8.2,  1.6], [4., 3.5], [-5., 3.], [6.7, 2.5], [-13, 5.], [9.8, 6.], [10.5, 7.], [7., -4.], [0., -5.]], [45 / (180) * np.pi, 230 / (180) * np.pi, 270 / (180) * np.pi, 315 / (180) * np.pi, 10 / (180) * np.pi, 170 / (180) * np.pi, 120 / (180) * np.pi, -10 / (180) * np.pi, -30 / (180) * np.pi], [Lambda * 5, Lambda * 3, Lambda * 7, Lambda * 4, Lambda * 1.5, Lambda * 2.5, Lambda * 1.8, Lambda * 2.9, Lambda * 2.2]):
+            target_point = source_point + np.array([np.cos(angle) * distance, np.sin(angle) * distance])
+            cf.add_arrow(ax, x_start=source_point[0], y_start=source_point[1], x_end=target_point[0], y_end=target_point[1], fc=cf.BLACK, ec=cf.BLACK)
+
+        s = cf.get_suitable_s(ax, num=int(point_density*whole_cortex_polygon.area)) / 10
+        for area, polygon in polygon_dict.items():
+            points = generate_random_point_in_polygon(polygon, density=point_density, seed=0)
+            cf.plt_scatter(ax, points[:, 0], points[:, 1], color=cf.GREY, s=s, zorder=-1, alpha=0.5)
+        
+        ax = ax_dict['e']
+        cf.set_ax(ax, title='Atlas registration')
+        show_area_boundary(ax, animal, dataset_key)
+        for source_point, angle, distance in zip([[-8.2,  1.6], [4., 3.5], [-5., 3.], [6.7, 2.5], [-13, 5.], [9.8, 6.], [10.5, 7.], [7., -4.], [0., -5.]], [45 / (180) * np.pi, 230 / (180) * np.pi, 270 / (180) * np.pi, 315 / (180) * np.pi, 10 / (180) * np.pi, 170 / (180) * np.pi, 120 / (180) * np.pi, -10 / (180) * np.pi, -30 / (180) * np.pi], [Lambda * 5, Lambda * 3, Lambda * 7, Lambda * 4, Lambda * 1.5, Lambda * 2.5, Lambda * 1.8, Lambda * 2.9, Lambda * 2.2]):
+            target_point = source_point + np.array([np.cos(angle) * distance, np.sin(angle) * distance])
+            cf.add_arrow(ax, x_start=source_point[0], y_start=source_point[1], x_end=target_point[0], y_end=target_point[1], fc=cf.BLACK, ec=cf.BLACK)
+        s = cf.get_suitable_s(ax, num=int(point_density*whole_cortex_polygon.area)) / 10
+        for area, polygon in polygon_dict.items():
+            points = generate_random_point_in_polygon(polygon, density=point_density, seed=0)
+            cf.plt_scatter(ax, points[:, 0], points[:, 1], color=cf.GREY, s=s, zorder=-1, alpha=0.5)
+        
+        ax_model = ax_dict['f']
+        single_visualizer = self.multi_visualizer.get_single_visualizer(cf.cat(animal, dataset_key))
+        selected_target_area_list = animal_info.source_name
+        single_visualizer.connection_by_arrows_on_flatmap(ax=ax_model, data_or_model='model', selected_target_area_list=selected_target_area_list)
+        ax_model.set_title('Area level connection')
 
         cf.save_fig(fig, self.figdir+'/fig_1', **self.save_fig_kwargs)
 
