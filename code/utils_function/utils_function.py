@@ -2836,7 +2836,7 @@ def show_value_on_flatmap(ax, animal, dataset_key, value_dict, cmap, cbar_label=
         ax.set_ylim(new_ylim)
 
 
-def show_area_centers_on_flatmap(ax, animal, dataset_key, color=cf.BLACK, s=80, mode='only_largest'):
+def show_area_centers_on_flatmap(ax, animal, dataset_key, color=cf.BLACK, s=80, mode='only_largest', zorder=None):
     '''
     在flatmap上显示脑区中心点
     '''
@@ -2856,11 +2856,16 @@ def show_area_centers_on_flatmap(ax, animal, dataset_key, color=cf.BLACK, s=80, 
                     max_split = spilit_area
             filtered_area_center_dict[max_split] = area_center_dict[max_split]
         for area, center in filtered_area_center_dict.items():
-            cf.plt_scatter(ax, x=center[0], y=center[1], color=color, s=s)
+            if zorder is not None:
+                cf.plt_scatter(ax, x=center[0], y=center[1], color=color, s=s, zorder=zorder)
+            else:
+                cf.plt_scatter(ax, x=center[0], y=center[1], color=color, s=s)
     else:
         for area, center in area_center_dict.items():
-            cf.plt_scatter(ax, x=center[0], y=center[1], color=color, s=s)
-
+            if zorder is not None:
+                cf.plt_scatter(ax, x=center[0], y=center[1], color=color, s=s, zorder=zorder)
+            else:
+                cf.plt_scatter(ax, x=center[0], y=center[1], color=color, s=s)
 
 def show_connection_on_flatmap(ax, animal, dataset_key, SC, show_area_name=False, text_fontsize=cf.FONT_SIZE/3, vmin=0.001, vmax=0.2, edgecolor=cf.BLACK, set_xylim=True, selected_target_area_list=None, top_edges=0.1, mode='global'):
     """
@@ -2882,9 +2887,8 @@ def show_connection_on_flatmap(ax, animal, dataset_key, SC, show_area_name=False
     """
     animal_info = AnimalInfo(animal, dataset_key)
     show_area_boundary(ax, animal, dataset_key, show_area_name=show_area_name, text_fontsize=text_fontsize, edgecolor=edgecolor, set_xylim=set_xylim)
-    show_area_centers_on_flatmap(ax, animal, dataset_key, color=cf.BLACK, mode='only_largest')
 
-    new_max = cf.LINE_WIDTH * 1.0
+    new_max = cf.LINE_WIDTH * 1.5
     new_min = cf.LINE_WIDTH * 0.05
 
     # 收集所有连接的权重
@@ -2994,7 +2998,8 @@ def show_connection_on_flatmap(ax, animal, dataset_key, SC, show_area_name=False
             else:
                 linewidth = cf.scale_to_new_range(data=weight, old_min=vmin, old_max=vmax, new_min=new_min, new_max=new_max)
             
-            cf.plt_line(ax, x=[start[0], end[0]], y=[start[1], end[1]], color=cf.BLACK, linewidth=linewidth, alpha=0.7)
+            cf.plt_line(ax, x=[start[0], end[0]], y=[start[1], end[1]], color=cf.CRIMSON, linewidth=linewidth, alpha=0.7)
+    show_area_centers_on_flatmap(ax, animal, dataset_key, color=cf.BLACK, mode='only_largest', zorder=10000)
 
 
 def show_area_boundary(ax, animal, dataset_key, show_area_name=False, text_fontsize=cf.FONT_SIZE/3, edgecolor=cf.BLACK, set_xylim=True):
@@ -3391,7 +3396,7 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
 
             bin_num = self.bin_num
             angle_heatmap, *args = cf.get_hist_2d(azim_value, elev_value, bin_num, bin_num)
-            cf.sns_marginal_heatmap(ax, angle_heatmap, outside=False, heatmap_kwargs=dict(cmap=cf.get_cmap([cf.WHITE, color]), show_xtick=False, show_ytick=False, vmax=0.02, cbar_kwargs=dict(add_geq=True)), x_color=color, y_color=color)
+            cf.sns_marginal_heatmap(ax, angle_heatmap, outside=False, heatmap_kwargs=dict(cmap=cf.get_cmap([cf.WHITE, color]), show_xtick=False, show_ytick=False, vmin=0., vmax=0.02, cbar_kwargs=dict(add_geq=True)), x_color=color, y_color=color)
             cf.set_ax(ax, xlabel='Azimuth', ylabel='Elevation', title=data_or_model)
             return angle_heatmap
 
@@ -4138,7 +4143,7 @@ class PaperFig:
         s = cf.get_suitable_s(ax, num=int(point_density*whole_cortex_polygon.area)) / 10
         for area, polygon in polygon_dict.items():
             points = generate_random_point_in_polygon(polygon, density=point_density, seed=0)
-            cf.plt_scatter(ax, points[:, 0], points[:, 1], color=cf.GRAY, s=s, zorder=-1, alpha=0.5)
+            cf.plt_scatter(ax, points[:, 0], points[:, 1], color=cf.ORANGE, s=s, zorder=-1, alpha=0.5)
 
         ax = ax_dict['c']
         cf.set_ax(ax, title='Connection generation methodology')
@@ -4149,7 +4154,7 @@ class PaperFig:
         s = cf.get_suitable_s(ax, num=int(point_density*whole_cortex_polygon.area)) / 10
         for area, polygon in polygon_dict.items():
             points = generate_random_point_in_polygon(polygon, density=point_density, seed=0)
-            cf.plt_scatter(ax, points[:, 0], points[:, 1], color=cf.GRAY, s=s, zorder=-1, alpha=0.5)
+            cf.plt_scatter(ax, points[:, 0], points[:, 1], color=cf.ORANGE, s=s, zorder=-1, alpha=0.5)
         
         for source_point, angle, distance in zip([[-8.2,  1.6]], [45 / (180) * np.pi], [Lambda * 5]):
             target_point = source_point + np.array([np.cos(angle) * distance, np.sin(angle) * distance])
@@ -4170,7 +4175,7 @@ class PaperFig:
         s = cf.get_suitable_s(ax, num=int(point_density*whole_cortex_polygon.area)) / 10
         for area, polygon in polygon_dict.items():
             points = generate_random_point_in_polygon(polygon, density=point_density, seed=0)
-            cf.plt_scatter(ax, points[:, 0], points[:, 1], color=cf.GREY, s=s, zorder=-1, alpha=0.5)
+            cf.plt_scatter(ax, points[:, 0], points[:, 1], color=cf.ORANGE, s=s, zorder=-1, alpha=0.5)
         
         ax_model = ax_dict['e']
         single_visualizer = self.multi_visualizer.get_single_visualizer(cf.cat(animal, dataset_key))
@@ -4223,7 +4228,7 @@ class PaperFig:
         s = cf.get_suitable_s(ax, num=int(point_density*whole_cortex_polygon.area)) / 10
         for area, polygon in polygon_dict.items():
             points = generate_random_point_in_polygon(polygon, density=point_density, seed=0)
-            cf.plt_scatter(ax, points[:, 0], points[:, 1], color=cf.GRAY, s=s, zorder=-1, alpha=0.5)
+            cf.plt_scatter(ax, points[:, 0], points[:, 1], color=cf.RYO, s=s, zorder=-1, alpha=0.5)
 
         ax = ax_dict['c']
         cf.set_ax(ax, title='Connection generation methodology')
@@ -4234,14 +4239,14 @@ class PaperFig:
         s = cf.get_suitable_s(ax, num=int(point_density*whole_cortex_polygon.area)) / 10
         for area, polygon in polygon_dict.items():
             points = generate_random_point_in_polygon(polygon, density=point_density, seed=0)
-            cf.plt_scatter(ax, points[:, 0], points[:, 1], color=cf.GRAY, s=s, zorder=-1, alpha=0.5)
+            cf.plt_scatter(ax, points[:, 0], points[:, 1], color=cf.RYO, s=s, zorder=-1, alpha=0.5)
         
         for source_point, angle, distance in zip([[-8.2,  1.6]], [45 / (180) * np.pi], [Lambda * 5]):
             target_point = source_point + np.array([np.cos(angle) * distance, np.sin(angle) * distance])
-            cf.plt_scatter(ax, [source_point[0]], [source_point[1]], color=cf.BLACK, s=50, zorder=1)
-            cf.add_arrow(ax, x_start=source_point[0], y_start=source_point[1], x_end=target_point[0], y_end=target_point[1], fc=cf.BLACK, ec=cf.BLACK)
-            cf.add_arc_patch(ax, source_point, distance * 0.3, 0, angle, facecolor=cf.BLACK, edgecolor=cf.BLACK)
-            cf.plt_line(ax, [source_point[0], source_point[0] + distance], [source_point[1], source_point[1]], color=cf.BLACK, linestyle='--')
+            cf.plt_scatter(ax, [source_point[0]], [source_point[1]], color=cf.CRIMSON, s=50, zorder=1)
+            cf.add_arrow(ax, x_start=source_point[0], y_start=source_point[1], x_end=target_point[0], y_end=target_point[1], fc=cf.CRIMSON, ec=cf.CRIMSON)
+            cf.add_arc_patch(ax, source_point, distance * 0.3, 0, angle, facecolor=cf.CRIMSON, edgecolor=cf.CRIMSON)
+            cf.plt_line(ax, [source_point[0], source_point[0] + distance], [source_point[1], source_point[1]], color=cf.CRIMSON, linestyle='--')
             cf.add_text(ax, text='$\\theta$', x=source_point[0] + np.cos(angle/2) * distance * 0.4, y=source_point[1] + np.sin(angle/2) * distance * 0.4, va='center', ha='center', transform='data', fontsize=cf.LABEL_SIZE)
             cf.add_text(ax, text='d', x=(source_point[0] + target_point[0])/2, y=(source_point[1] + target_point[1])/2, va='bottom', ha='right', transform='data', text_process={'capitalize': False}, fontsize=cf.LABEL_SIZE)
 
@@ -4250,23 +4255,23 @@ class PaperFig:
         show_whole_cortex_boundary(ax, animal, dataset_key)
         for source_point, angle, distance in zip([[-8.2,  1.6], [4., 3.5], [-5., 3.], [6.7, 2.5], [-13, 5.], [9.8, 6.], [10.5, 7.], [7., -4.], [0., -5.]], [45 / (180) * np.pi, 230 / (180) * np.pi, 270 / (180) * np.pi, 315 / (180) * np.pi, 10 / (180) * np.pi, 170 / (180) * np.pi, 120 / (180) * np.pi, -10 / (180) * np.pi, -30 / (180) * np.pi], [Lambda * 5, Lambda * 3, Lambda * 7, Lambda * 4, Lambda * 1.5, Lambda * 2.5, Lambda * 1.8, Lambda * 2.9, Lambda * 2.2]):
             target_point = source_point + np.array([np.cos(angle) * distance, np.sin(angle) * distance])
-            cf.add_arrow(ax, x_start=source_point[0], y_start=source_point[1], x_end=target_point[0], y_end=target_point[1], fc=cf.BLACK, ec=cf.BLACK)
+            cf.add_arrow(ax, x_start=source_point[0], y_start=source_point[1], x_end=target_point[0], y_end=target_point[1], fc=cf.CRIMSON, ec=cf.CRIMSON)
 
         s = cf.get_suitable_s(ax, num=int(point_density*whole_cortex_polygon.area)) / 10
         for area, polygon in polygon_dict.items():
             points = generate_random_point_in_polygon(polygon, density=point_density, seed=0)
-            cf.plt_scatter(ax, points[:, 0], points[:, 1], color=cf.GREY, s=s, zorder=-1, alpha=0.5)
+            cf.plt_scatter(ax, points[:, 0], points[:, 1], color=cf.RYO, s=s, zorder=-1, alpha=0.5)
         
         ax = ax_dict['e']
         cf.set_ax(ax, title='Atlas registration')
         show_area_boundary(ax, animal, dataset_key)
         for source_point, angle, distance in zip([[-8.2,  1.6], [4., 3.5], [-5., 3.], [6.7, 2.5], [-13, 5.], [9.8, 6.], [10.5, 7.], [7., -4.], [0., -5.]], [45 / (180) * np.pi, 230 / (180) * np.pi, 270 / (180) * np.pi, 315 / (180) * np.pi, 10 / (180) * np.pi, 170 / (180) * np.pi, 120 / (180) * np.pi, -10 / (180) * np.pi, -30 / (180) * np.pi], [Lambda * 5, Lambda * 3, Lambda * 7, Lambda * 4, Lambda * 1.5, Lambda * 2.5, Lambda * 1.8, Lambda * 2.9, Lambda * 2.2]):
             target_point = source_point + np.array([np.cos(angle) * distance, np.sin(angle) * distance])
-            cf.add_arrow(ax, x_start=source_point[0], y_start=source_point[1], x_end=target_point[0], y_end=target_point[1], fc=cf.BLACK, ec=cf.BLACK)
+            cf.add_arrow(ax, x_start=source_point[0], y_start=source_point[1], x_end=target_point[0], y_end=target_point[1], fc=cf.CRIMSON, ec=cf.CRIMSON)
         s = cf.get_suitable_s(ax, num=int(point_density*whole_cortex_polygon.area)) / 10
         for area, polygon in polygon_dict.items():
             points = generate_random_point_in_polygon(polygon, density=point_density, seed=0)
-            cf.plt_scatter(ax, points[:, 0], points[:, 1], color=cf.GREY, s=s, zorder=-1, alpha=0.5)
+            cf.plt_scatter(ax, points[:, 0], points[:, 1], color=cf.RYO, s=s, zorder=-1, alpha=0.5)
         
         ax_model = ax_dict['f']
         single_visualizer = self.multi_visualizer.get_single_visualizer(cf.cat(animal, dataset_key))
