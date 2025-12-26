@@ -4513,6 +4513,42 @@ class PaperFig:
         # self.multi_visualizer.rm_redundant_xylabel()
         self.multi_visualizer.save_fig(self.figdir+'/fig_6')
 
+    def PNAS_fig_5(self):
+        '''
+        distance analysis
+        '''
+        local_multi_visualizer = cf.MultiVisualizerByRow.from_multi_visualizer_instance(self.multi_visualizer)
+        get_ax_kwargs = {'ncols': 2, 'margin': cf.MARGIN.update({'top': 0.6})}
+        get_suitable_figsize_kwargs = {'ncols': 2, 'ax_height': cf.AX_HEIGHT*0.8, 'margin': cf.MARGIN.update({'top': 0.6})}
+        fig_dict, ax_dict = local_multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
+        rm_longrange_kwargs_list = []
+        category_longrange_SC_kwargs_list = []
+        for title, ax in ax_dict.items():
+            rm_longrange_kwargs_list.append({'ax': ax[0], 'dim': '2D'})
+            category_longrange_SC_kwargs_list.append({'ax': ax[1]})
+        local_multi_visualizer.multi_ax_plot_by_single_visualizer('rm_longrange_correlation_change', rm_longrange_kwargs_list)
+        local_multi_visualizer.multi_ax_plot_by_single_visualizer('category_long_range_SC', category_longrange_SC_kwargs_list)
+        local_multi_visualizer.add_tag(y=1.45, x=-0.3)
+        local_multi_visualizer.add_subfig_title(y=0.9)
+        local_multi_visualizer.save_fig(self.figdir+'/PNAS_fig_5')
+
+    def PNAS_SI_fig_8(self):
+        '''
+        distance analysis
+        '''
+        get_ax_kwargs = {'nrows': 1}
+        get_suitable_figsize_kwargs = {'nrows': 1}
+        fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
+        data_anlge_uniform_index_with_distance_threshold_kwargs_list = []
+        for title, ax in ax_dict.items():
+            distance_threshold_list = np.linspace(0, np.nanmax(self.multi_visualizer.get_single_visualizer(title).animal_info.distance_2D.values), 40)[:-2]
+            data_anlge_uniform_index_with_distance_threshold_kwargs_list.append({'ax': ax, 'distance_threshold_list': distance_threshold_list})
+        self.multi_visualizer.multi_ax_plot_by_single_visualizer('data_anlge_uniform_index_with_distance_threshold', data_anlge_uniform_index_with_distance_threshold_kwargs_list)
+        self.multi_visualizer.add_tag(row_first=False)
+        self.multi_visualizer.add_subfig_title(y=1.05)
+        # self.multi_visualizer.rm_redundant_xylabel()
+        self.multi_visualizer.save_fig(self.figdir+'/PNAS_SI_fig_8')
+
     def fig_7(self):
         '''
         cross species
