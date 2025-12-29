@@ -1281,7 +1281,8 @@ def load_area_category_dict(animal, dataset_key):
 
 def get_area_category_in_order():
     # return ['Occipital', 'Temporal', 'Parietal', 'Limbic', 'Insular', 'Frontal', 'Prefrontal']
-    return ['Frontal', 'Insular', 'Limbic', 'Occipital', 'Parietal', 'Prefrontal', 'Temporal']
+    # return ['Frontal', 'Insular', 'Limbic', 'Occipital', 'Parietal', 'Prefrontal', 'Temporal']
+    return ['Frontal', 'Insular', 'Limbic', 'Occipital', 'Parietal', 'Temporal', 'Prefrontal']
 
 
 def load_injection_id_to_area_map(animal, dataset_key):
