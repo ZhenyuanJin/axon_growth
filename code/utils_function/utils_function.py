@@ -3072,7 +3072,7 @@ def draw_mask_for_unmeasured_block(ax, animal, dataset_key):
             else:
                 unmeasured_matrix[i, :] = 1
         cf.add_text(ax, x=target_num/2, y=(target_num+source_num)/2, text='Unmeasured', fontsize=cf.LABEL_SIZE, ha='center', va='center', transform='data')
-    cf.sns_heatmap(ax, unmeasured_matrix, show_xtick=False, show_ytick=False, cmap=cmap, cbar=False)
+    cf.sns_heatmap(ax, unmeasured_matrix, show_xtick=False, show_ytick=False, cmap=cmap, cbar=False, heatmap_kwargs={'rasterized': True})
 
 
 def visualize_connection_matrix_heatmap(ax_data, ax_model, matrix_data, matrix_model, animal, dataset_key, log_matrix=False, topo=False, show_correlation=True):
@@ -3120,8 +3120,8 @@ def visualize_connection_matrix_heatmap(ax_data, ax_model, matrix_data, matrix_m
 
     # 连接矩阵
     cbar_kwargs = {'add_geq': add_geq, 'ticks': ticks}
-    cf.sns_heatmap(ax_data, local_matrix_data, show_xtick=False, show_ytick=False, cmap=cmap, vmin=vmin, vmax=vmax, cbar_kwargs=cbar_kwargs)
-    cf.sns_heatmap(ax_model, local_matrix_model, show_xtick=False, show_ytick=False, cmap=cmap, vmin=vmin, vmax=vmax, cbar_kwargs=cbar_kwargs)
+    cf.sns_heatmap(ax_data, local_matrix_data, show_xtick=False, show_ytick=False, cmap=cmap, vmin=vmin, vmax=vmax, cbar_kwargs=cbar_kwargs, heatmap_kwargs={'rasterized': True})
+    cf.sns_heatmap(ax_model, local_matrix_model, show_xtick=False, show_ytick=False, cmap=cmap, vmin=vmin, vmax=vmax, cbar_kwargs=cbar_kwargs, heatmap_kwargs={'rasterized': True})
 
     # 未测量部分
     draw_mask_for_unmeasured_block(ax_data, animal=animal, dataset_key=dataset_key)
@@ -3762,11 +3762,11 @@ class PaperFig:
         exp_y = np.exp(-exp_x/Lambda)/Lambda
         uniform_x = np.linspace(-np.pi, np.pi, 1000)
         uniform_y = np.ones(uniform_x.shape) / (2*np.pi)
-        margin = cf.COMPACT_MARGIN
+        margin = cf.COMPACT_MARGIN.copy()
         margin['top'] = 0.87
         margin['bottom'] = 0.13
 
-        fig, axes = cf.get_fig_ax(ncols=7, nrows=2, margin=cf.COMPACT_MARGIN, ax_width=cf.AX_WIDTH*0.6, ax_height=cf.AX_HEIGHT*0.6)
+        fig, axes = cf.get_fig_ax(ncols=7, nrows=2, margin=margin, ax_width=cf.AX_WIDTH*0.6, ax_height=cf.AX_HEIGHT*0.6)
 
         ax_dict = {}
         ax_dict['a'] = cf.merge_ax(axes[0:2, 0:2])
@@ -3837,11 +3837,11 @@ class PaperFig:
         exp_y = np.exp(-exp_x/Lambda)/Lambda
         uniform_x = np.linspace(-np.pi, np.pi, 1000)
         uniform_y = np.ones(uniform_x.shape) / (2*np.pi)
-        margin = cf.COMPACT_MARGIN
+        margin = cf.COMPACT_MARGIN.copy()
         margin['top'] = 0.87
         margin['bottom'] = 0.13
 
-        fig, axes = cf.get_fig_ax(ncols=5, nrows=2, margin=cf.COMPACT_MARGIN, ax_width=cf.AX_WIDTH*0.6, ax_height=cf.AX_HEIGHT*0.57)
+        fig, axes = cf.get_fig_ax(ncols=5, nrows=2, margin=margin, ax_width=cf.AX_WIDTH*0.6, ax_height=cf.AX_HEIGHT*0.57)
 
         ax_dict = {}
         ax_dict['a'] = axes[0, 0]
@@ -3919,11 +3919,11 @@ class PaperFig:
         exp_y = np.exp(-exp_x/Lambda)/Lambda
         uniform_x = np.linspace(-np.pi, np.pi, 1000)
         uniform_y = np.ones(uniform_x.shape) / (2*np.pi)
-        margin = cf.COMPACT_MARGIN
+        margin = cf.COMPACT_MARGIN.copy()
         margin['top'] = 0.87
         margin['bottom'] = 0.13
 
-        fig, axes = cf.get_fig_ax(ncols=4, nrows=2, margin=cf.COMPACT_MARGIN, ax_width=cf.AX_WIDTH*0.6, ax_height=cf.AX_HEIGHT*0.57)
+        fig, axes = cf.get_fig_ax(ncols=4, nrows=2, margin=margin, ax_width=cf.AX_WIDTH*0.6, ax_height=cf.AX_HEIGHT*0.57)
 
         ax_dict = {}
         ax_dict['a'] = cf.merge_ax(axes[0:2, 0:2])
@@ -3985,11 +3985,11 @@ class PaperFig:
         exp_y = np.exp(-exp_x/Lambda)/Lambda
         uniform_x = np.linspace(-np.pi, np.pi, 1000)
         uniform_y = np.ones(uniform_x.shape) / (2*np.pi)
-        margin = cf.COMPACT_MARGIN
+        margin = cf.COMPACT_MARGIN.copy()
         margin['top'] = 0.87
         margin['bottom'] = 0.13
 
-        fig, axes = cf.get_fig_ax(ncols=3, nrows=2, margin=cf.COMPACT_MARGIN, ax_width=cf.AX_WIDTH*1.15, ax_height=cf.AX_HEIGHT*1.15)
+        fig, axes = cf.get_fig_ax(ncols=3, nrows=2, margin=margin, ax_width=cf.AX_WIDTH*1.15, ax_height=cf.AX_HEIGHT*1.15)
 
         ax_dict = {}
         ax_dict['a'] = axes[0, 0]
@@ -4119,11 +4119,11 @@ class PaperFig:
         exp_y = np.exp(-exp_x/Lambda)/Lambda
         uniform_x = np.linspace(-np.pi, np.pi, 1000)
         uniform_y = np.ones(uniform_x.shape) / (2*np.pi)
-        margin = cf.COMPACT_MARGIN
+        margin = cf.COMPACT_MARGIN.copy()
         margin['top'] = 0.87
         margin['bottom'] = 0.13
 
-        fig, axes = cf.get_fig_ax(ncols=3, nrows=2, margin=cf.COMPACT_MARGIN, ax_width=cf.AX_WIDTH*1.15, ax_height=cf.AX_HEIGHT*1.15)
+        fig, axes = cf.get_fig_ax(ncols=3, nrows=2, margin=margin, ax_width=cf.AX_WIDTH*1.15, ax_height=cf.AX_HEIGHT*1.15)
 
         ax_dict = {}
         ax_dict['a'] = axes[0, 0]
@@ -4203,11 +4203,11 @@ class PaperFig:
         exp_y = np.exp(-exp_x/Lambda)/Lambda
         uniform_x = np.linspace(-np.pi, np.pi, 1000)
         uniform_y = np.ones(uniform_x.shape) / (2*np.pi)
-        margin = cf.COMPACT_MARGIN
+        margin = cf.COMPACT_MARGIN.copy()
         margin['top'] = 0.87
         margin['bottom'] = 0.13
 
-        fig, axes = cf.get_fig_ax(ncols=3, nrows=2, margin=cf.COMPACT_MARGIN, ax_width=cf.AX_WIDTH*1.15, ax_height=cf.AX_HEIGHT*1.15)
+        fig, axes = cf.get_fig_ax(ncols=3, nrows=2, margin=margin, ax_width=cf.AX_WIDTH*1.15, ax_height=cf.AX_HEIGHT*1.15)
 
         ax_dict = {}
         ax_dict['a'] = axes[0, 0]
@@ -4432,7 +4432,7 @@ class PaperFig:
         animal_info = AnimalInfo(animal, dataset_key)
         single_visualizer = self.multi_visualizer.get_single_visualizer(cf.cat(animal, dataset_key))
 
-        margin = cf.MARGIN
+        margin = cf.MARGIN.copy()
         margin['left'] -= 0.05
         margin['right'] += 0.05
         margin['top'] += 0.05
@@ -4518,20 +4518,19 @@ class PaperFig:
         '''
         distance analysis
         '''
-        local_multi_visualizer = cf.MultiVisualizerByRow.from_multi_visualizer_instance(self.multi_visualizer)
-        get_ax_kwargs = {'ncols': 2, 'margin': cf.MARGIN.update({'top': 0.6})}
-        get_suitable_figsize_kwargs = {'ncols': 2, 'ax_height': cf.AX_HEIGHT*0.8, 'margin': cf.MARGIN.update({'top': 0.6})}
-        fig_dict, ax_dict = local_multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
+        get_ax_kwargs = {'nrows': 2}
+        get_suitable_figsize_kwargs = {'nrows': 2}
+        fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
         rm_longrange_kwargs_list = []
         category_longrange_SC_kwargs_list = []
         for title, ax in ax_dict.items():
             rm_longrange_kwargs_list.append({'ax': ax[0], 'dim': '2D'})
             category_longrange_SC_kwargs_list.append({'ax': ax[1]})
-        local_multi_visualizer.multi_ax_plot_by_single_visualizer('rm_longrange_correlation_change', rm_longrange_kwargs_list)
-        local_multi_visualizer.multi_ax_plot_by_single_visualizer('category_long_range_SC', category_longrange_SC_kwargs_list)
-        local_multi_visualizer.add_tag(y=1.45, x=-0.3)
-        local_multi_visualizer.add_subfig_title(y=0.9)
-        local_multi_visualizer.save_fig(self.figdir+'/PNAS_fig_5')
+        self.multi_visualizer.multi_ax_plot_by_single_visualizer('rm_longrange_correlation_change', rm_longrange_kwargs_list)
+        self.multi_visualizer.multi_ax_plot_by_single_visualizer('category_long_range_SC', category_longrange_SC_kwargs_list)
+        self.multi_visualizer.add_tag(row_first=False)
+        self.multi_visualizer.add_subfig_title(y=1.05)
+        self.multi_visualizer.save_fig(self.figdir+'/PNAS_fig_5')
 
     def PNAS_SI_fig_8(self):
         '''
@@ -4724,8 +4723,10 @@ class PaperFig:
         这里因为要搞成2x2的形式,所以要重新生成一个multi_visualizer
         '''
         local_multi_visualizer = cf.MultiVisualizer.from_multi_visualizer_instance(self.multi_visualizer)
-        get_ax_kwargs = {'nrows': 1, 'margin': cf.MARGIN.copy().update({'top': 0.8})}
-        get_suitable_figsize_kwargs = {'nrows': 1, 'ax_width': cf.AX_WIDTH*2, 'margin': cf.MARGIN.copy().update({'top': 0.8}), 'which': 'margin'}
+        margin = cf.MARGIN.copy()
+        margin['top'] = 0.8
+        get_ax_kwargs = {'nrows': 1, 'margin': margin}
+        get_suitable_figsize_kwargs = {'nrows': 1, 'ax_width': cf.AX_WIDTH*2, 'margin': margin, 'which': 'margin'}
         fig_dict, ax_dict = local_multi_visualizer.get_fig_subfig_ax(subfig_ncols=2, subfig_nrows=2, get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
         kwargs_list = []
         for title, ax in ax_dict.items():
@@ -4944,11 +4945,13 @@ class PaperFigCompareModel:
     def performance_heatmap(self):
         different_model_performance_dict = self.get_performance()
         
-        fig, ax = cf.get_fig_ax(ncols=4, margin=cf.MARGIN.copy().update({'left': 0.1, 'right': 0.7}))
+        margin = cf.MARGIN.copy()
+        margin.update({'left': 0.1, 'right': 0.7})
+        fig, ax = cf.get_fig_ax(ncols=4, margin=margin)
         performance_heatmap(ax, different_model_performance_dict, only_show_animal=True)
         cf.save_fig(fig, cf.pj(self.figdir, 'performance_heatmap_full'), bbox_inches='tight')
 
-        fig, ax = cf.get_fig_ax(ncols=4, margin=cf.MARGIN.copy().update({'left': 0.1, 'right': 0.7}))
+        fig, ax = cf.get_fig_ax(ncols=4, margin=margin)
         performance_heatmap(ax, different_model_performance_dict, only_show_animal=True, show_accuracy_list=['correlation', 'accuracy_strong', 'accuracy_medium_strong', 'accuracy_weak_medium', 'accuracy_weak'], accuracy_key_to_label_in_fig_dict={'correlation': 'corr', 'accuracy_strong': 'acc_strong', 'accuracy_medium_strong': 'acc_med_strong', 'accuracy_weak_medium': 'acc_weak_med', 'accuracy_weak': 'acc_weak'})
         cf.save_fig(fig, cf.pj(self.figdir, 'performance_heatmap_selected'), bbox_inches='tight')
 
