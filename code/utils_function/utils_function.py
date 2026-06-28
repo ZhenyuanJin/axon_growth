@@ -4353,8 +4353,8 @@ class PaperFig:
         UAR,2D and 3D
         '''
         get_ax_kwargs = {'nrows': 3}
-        get_suitable_figsize_kwargs = {'nrows': 3}
-        fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
+        get_suitable_fig_size_kwargs = {'nrows': 3, 'which': 'adjust_params_custom'}
+        fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_fig_size_kwargs)
         angle_kwargs_list = []
         angle_3D_kwargs_list = []
         for title, ax in ax_dict.items():
@@ -4494,8 +4494,8 @@ class PaperFig:
         distance analysis
         '''
         get_ax_kwargs = {'nrows': 3}
-        get_suitable_figsize_kwargs = {'nrows': 3}
-        fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
+        get_suitable_fig_size_kwargs = {'nrows': 3, 'which': 'adjust_params_custom'}
+        fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_fig_size_kwargs)
         rm_longrange_kwargs_list = []
         data_anlge_uniform_index_with_distance_threshold_kwargs_list = []
         category_longrange_SC_kwargs_list = []
@@ -4519,8 +4519,8 @@ class PaperFig:
         distance analysis
         '''
         get_ax_kwargs = {'nrows': 2}
-        get_suitable_figsize_kwargs = {'nrows': 2}
-        fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
+        get_suitable_fig_size_kwargs = {'nrows': 2, 'which': 'adjust_params_custom'}
+        fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_fig_size_kwargs)
         rm_longrange_kwargs_list = []
         category_longrange_SC_kwargs_list = []
         for title, ax in ax_dict.items():
@@ -4537,8 +4537,8 @@ class PaperFig:
         distance analysis
         '''
         get_ax_kwargs = {'nrows': 1}
-        get_suitable_figsize_kwargs = {'nrows': 1}
-        fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
+        get_suitable_fig_size_kwargs = {'nrows': 1, 'which': 'adjust_params_custom'}
+        fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_fig_size_kwargs)
         data_anlge_uniform_index_with_distance_threshold_kwargs_list = []
         for title, ax in ax_dict.items():
             distance_threshold_list = np.linspace(0, np.nanmax(self.multi_visualizer.get_single_visualizer(title).animal_info.distance_2D.values), 40)[:-2]
@@ -4618,8 +4618,8 @@ class PaperFig:
         2D EDR
         '''
         get_ax_kwargs = {'nrows': 2}
-        get_suitable_figsize_kwargs = {'nrows': 2}
-        fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
+        get_suitable_fig_size_kwargs = {'nrows': 2, 'which': 'adjust_params_custom'}
+        fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_fig_size_kwargs)
         twoD_threeD_distance_scatter_kwargs_list = []
         distance_kwargs_list = []
         for title, ax in ax_dict.items():
@@ -4637,8 +4637,8 @@ class PaperFig:
         angle distance independence
         '''
         get_ax_kwargs = {'nrows': 2}
-        get_suitable_figsize_kwargs = {'nrows': 2}
-        fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
+        get_suitable_fig_size_kwargs = {'nrows': 2, 'which': 'adjust_params_custom'}
+        fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_fig_size_kwargs)
         independence_kwargs_list = []
         angle_distance_independence_with_distance_threshold_kwargs_list = []
         n_neighbors = 20
@@ -4686,8 +4686,8 @@ class PaperFig:
             margin = cf.MARGIN.copy()
             # margin['top'] -= 0.1 # 原先横向排版所需
             get_ax_kwargs = {'nrows': 2, 'ncols': 3, 'margin': margin}
-            get_suitable_figsize_kwargs = {'nrows': 2, 'ncols': 3, 'margin': margin, 'which': 'margin'}
-            fig_dict, ax_dict = local_multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
+            get_suitable_fig_size_kwargs = {'nrows': 2, 'ncols': 3, 'margin': margin, 'which': 'margin'}
+            fig_dict, ax_dict = local_multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_fig_size_kwargs)
             distance_SC_data_kwargs_list = []
             distance_SC_model_kwargs_list = []
             SC_distribution_data_kwargs_list = []
@@ -4726,8 +4726,8 @@ class PaperFig:
         margin = cf.MARGIN.copy()
         margin['top'] = 0.8
         get_ax_kwargs = {'nrows': 1, 'margin': margin}
-        get_suitable_figsize_kwargs = {'nrows': 1, 'ax_width': cf.AX_WIDTH*2, 'margin': margin, 'which': 'margin'}
-        fig_dict, ax_dict = local_multi_visualizer.get_fig_subfig_ax(subfig_ncols=2, subfig_nrows=2, get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
+        get_suitable_fig_size_kwargs = {'nrows': 1, 'ax_width': cf.AX_WIDTH*2, 'margin': margin, 'which': 'margin'}
+        fig_dict, ax_dict = local_multi_visualizer.get_fig_subfig_ax(subfig_ncols=2, subfig_nrows=2, get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_fig_size_kwargs)
         kwargs_list = []
         for title, ax in ax_dict.items():
             kwargs_list.append({'ax': ax, 'performance_metric': 'correlation', 'sort': True})
@@ -4747,8 +4747,8 @@ class PaperFig:
         distance & relative error
         '''
         get_ax_kwargs = {'nrows': 1}
-        get_suitable_figsize_kwargs = {'nrows': 1}
-        fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
+        get_suitable_fig_size_kwargs = {'nrows': 1, 'which': 'adjust_params_custom'}
+        fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_fig_size_kwargs)
         kwargs_list = []
         for title, ax in ax_dict.items():
             kwargs_list.append({'ax': ax, 'dim': '2D'})
@@ -4763,8 +4763,8 @@ class PaperFig:
         direction preference & performance (correlation)
         '''
         get_ax_kwargs = {'nrows': 1}
-        get_suitable_figsize_kwargs = {'nrows': 1}
-        fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
+        get_suitable_fig_size_kwargs = {'nrows': 1, 'which': 'adjust_params_custom'}
+        fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_fig_size_kwargs)
         kwargs_list = []
         for title, ax in ax_dict.items():
             kwargs_list.append({'ax': ax, 'performance_metric': 'correlation', 'mode': 'uniform', 'diagonal': False})
@@ -4780,8 +4780,8 @@ class PaperFig:
         '''
         for n_neighbors in range(3, 30):
             get_ax_kwargs = {'nrows': 2}
-            get_suitable_figsize_kwargs = {'nrows': 2}
-            fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
+            get_suitable_fig_size_kwargs = {'nrows': 2, 'which': 'adjust_params_custom'}
+            fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_fig_size_kwargs)
             independence_kwargs_list = []
             angle_distance_independence_with_distance_threshold_kwargs_list = []
             for title, ax in ax_dict.items():
@@ -4820,8 +4820,8 @@ class PaperFig:
 
     def _check_topo_SC(self):
         get_ax_kwargs = {'nrows': 2}
-        get_suitable_figsize_kwargs = {'nrows': 2}
-        fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_figsize_kwargs)
+        get_suitable_fig_size_kwargs = {'nrows': 2, 'which': 'adjust_params_custom'}
+        fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_fig_size_kwargs)
         kwargs_list = []
         for title, ax in ax_dict.items():
             kwargs_list.append({'ax_data': ax[0], 'ax_model': ax[1], 'topo': True})
