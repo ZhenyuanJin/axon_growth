@@ -1,6 +1,5 @@
 import sys
 sys.path.append('../utils_function/')
-sys.path.append(r'/data/zyjin/common_func/')
 import utils_function as uf
 import common_functions as cf
 import pandas as pd

@@ -71,7 +71,6 @@ from mpl_toolkits.mplot3d import Axes3D
 from PIL import Image
 import cv2
 from reportlab.pdfgen import canvas
-from pdf2image import convert_from_path
 import imageio
 import shapely.geometry
 import pointpats
@@ -80,10 +79,7 @@ import SimpleITK as sitk
 from sklearn.feature_selection import mutual_info_regression
 
 # 自定义库
-# sys.path.append(r'/data/zyjin/common_func/')
-# import common_functions as cf
-sys.path.append(r'/data/zyjin/')
-import common_func.common_functions as cf
+import common_functions as cf
 # endregion
 
 
@@ -92,6 +88,14 @@ SOURCE_COLOR = cf.RED
 TARGET_COLOR = cf.GREEN
 DATA_COLOR = cf.PURPLE
 MODEL_COLOR = cf.GREEN
+
+OPTIMAL_PARAMS = {
+    'mouse_gamanut': {'Lambda': 0.85},
+    'marmoset_majka': {'Lambda': 2.075},
+    'macaque_markov40': {'Lambda': 9.6},
+    'human_lariviere': {'Lambda': 22.63},
+}
+OPTIMAL_PARAMS['marmoset_V4'] = OPTIMAL_PARAMS['marmoset_majka'].copy()
 # endregion
 
 
@@ -149,6 +153,8 @@ def generate_coords_polygon(animal, dataset_key):
     for filename in cf.get_subfile(animal_dir.raw_whole_cortex_coords_dir):
         r = organize_txt_coords(filename)
         whole_cortex_coords, whole_cortex_polygon = r['coords'], r['polygon']
+    cf.save_pkl(whole_cortex_coords, animal_dir.area_coords_dir + 'whole_cortex_coords')
+    cf.save_pkl(whole_cortex_polygon, animal_dir.area_coords_dir + 'whole_cortex_polygon')
     results = {'coords_dict': coords_dict, 'polygon_dict': polygon_dict, 'whole_cortex_coords': whole_cortex_coords, 'whole_cortex_polygon': whole_cortex_polygon}
     return results
 
@@ -690,9 +696,10 @@ class AnimalInfo(AnimalDir):
     @property
     def intrinsic_proportion(self):
         try:
-            self.raise_for_force_re_preprocess()
+            self._raise_for_force_re_preprocess('intrinsic_proportion')
             return load_intrinsic_proportion(self.animal, self.dataset_key)
         except:
+            self._update_re_preprocess_dict('intrinsic_proportion')
             return generate_intrinsic_proportion(self.animal, self.dataset_key)
     
     @property
@@ -834,7 +841,7 @@ def load_angle_matrix(animal, dataset_key, dim='2D'):
     '''
     animal_dir = AnimalDir(animal, dataset_key)
     if dim == '2D':
-        return cf.load_pkl(animal_dir.angle_matrix_dir + 'angle_matrix')
+        return cf.load_pkl(animal_dir.angle_matrix_dir + 'angle_matrix_2D')
     elif dim == '3D':
         return cf.load_pkl(animal_dir.angle_matrix_dir + 'angle_matrix_3D')
 
@@ -3207,7 +3214,6 @@ def visualize_macaque_marmoset_performance_similarity(ax, macaque_performance_di
 
 
 def visualize_scaling_law(ax, single_visualizer_list, dim='2D'):
-    optimal_params = cf.load_dict('../../results/optimal_params/optimal_params')
     Lambda_list = []
     max_distance_list = []
     for single_visualizer in single_visualizer_list:
@@ -3220,7 +3226,7 @@ def visualize_scaling_law(ax, single_visualizer_list, dim='2D'):
         max_distance = np.nanmax(distance_matrix.values)
         max_distance_list.append(max_distance)
 
-        Lambda = optimal_params[animal_and_dataset_key]['Lambda']
+        Lambda = OPTIMAL_PARAMS[animal_and_dataset_key]['Lambda']
         Lambda_list.append(Lambda)
     
     cf.plt_linregress(ax, x=max_distance_list, y=Lambda_list, xlog=True, ylog=True, show_list=['slope'], scatter_kwargs={'marker': '*', 's': 1000.})
