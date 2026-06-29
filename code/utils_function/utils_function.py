@@ -3426,7 +3426,7 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         elif dim == '3D':
             raise NotImplementedError
 
-    def data_anlge_uniform_index_with_distance_threshold(self, ax, distance_threshold_list, dim='2D'):
+    def data_angle_uniform_index_with_distance_threshold(self, ax, distance_threshold_list, dim='2D'):
         if dim == '2D':
             distance_matrix = self.animal_info.distance_2D
             angle_matrix = self.animal_info.angle_2D
@@ -3741,451 +3741,6 @@ class PaperFig:
         self.multi_visualizer.update_save_fig_kwargs(self.save_fig_kwargs)
         self.marmoset_V4_timedir = marmoset_V4_timedir
 
-    def fig_1_version1(self):
-        '''
-        生成模型示意图
-        '''
-        animal = 'marmoset'
-        dataset_key = 'majka'
-        animal_info = AnimalInfo(animal, dataset_key)
-        polygon_dict = animal_info.polygon_dict
-        full_name = animal_info.full_name
-        area_center_dict = animal_info.area_center_dict
-        whole_cortex_polygon = animal_info.whole_cortex_polygon
-        point_density = 15
-        source_area = 'V3'
-        target_area = 'V1'
-        source_center = area_center_dict[source_area]
-        target_center = area_center_dict[target_area]
-        Lambda = 2
-        exp_x = np.linspace(0, 10, 1000)
-        exp_y = np.exp(-exp_x/Lambda)/Lambda
-        uniform_x = np.linspace(-np.pi, np.pi, 1000)
-        uniform_y = np.ones(uniform_x.shape) / (2*np.pi)
-        margin = cf.COMPACT_MARGIN.copy()
-        margin['top'] = 0.87
-        margin['bottom'] = 0.13
-
-        fig, axes = cf.get_fig_ax(ncols=7, nrows=2, margin=margin, ax_width=cf.AX_WIDTH*0.6, ax_height=cf.AX_HEIGHT*0.6)
-
-        ax_dict = {}
-        ax_dict['a'] = cf.merge_ax(axes[0:2, 0:2])
-        ax_dict['b'] = cf.merge_ax(axes[0:2, 2:4])
-        ax_dict['c'] = cf.merge_ax(axes[0:2, 4:6])
-        ax_dict['d'] = axes[0, 6]
-        ax_dict['e'] = axes[1, 6]
-
-        cf.add_axes_dict_tag(axes_dict=ax_dict, ref_ax=axes[0, 0])
-
-        for ax in [ax_dict['a'], ax_dict['b'], ax_dict['c']]:
-            show_area_boundary(ax, animal, dataset_key, set_xylim=False)
-
-        # colors = cf.get_random_color(n=len(full_name), cmap=cf.HEATMAP_CMAP, seed=3)
-        colors = cf.get_plt_color(n=len(full_name))
-        color_dict = cf.create_dict(full_name, colors)
-        split_color_dict = broadcast_value_to_split_area(color_dict, animal, dataset_key)
-
-        ax = ax_dict['b']
-        s = cf.get_suitable_s(ax, num=int(point_density*whole_cortex_polygon.area)) / 10
-        for area, polygon in polygon_dict.items():
-            points = generate_random_point_in_polygon(polygon, density=point_density, seed=0)
-            cf.plt_scatter(ax, points[:, 0], points[:, 1], color=split_color_dict[area], s=s, zorder=-1)
-
-        ax = ax_dict['c']
-        for area, polygon in polygon_dict.items():
-            if area in [source_area, target_area]:
-                points = generate_random_point_in_polygon(polygon, density=point_density, seed=0)
-                cf.plt_scatter(ax, points[:, 0], points[:, 1], color=split_color_dict[area], s=s, zorder=-1)
-        cf.add_arrow(ax, x_start=source_center[0], y_start=source_center[1], x_end=target_center[0], y_end=target_center[1], fc=cf.BLACK, ec=cf.BLACK)
-        r = np.linalg.norm(source_center - target_center)
-        theta = cf.get_angle(source_center, target_center)
-        cf.plt_line(ax, [source_center[0], source_center[0] + r], [source_center[1], source_center[1]], color=cf.BLACK)
-        cf.add_arc_patch(ax, source_center, r * 0.3, 0, theta, facecolor=cf.BLACK, edgecolor=cf.BLACK)
-        # cf.add_text(ax, text='d', x=(source_center[0] + target_center[0])/2, y=(source_center[1] + target_center[1])/2, va='center', ha='center', transform='data', text_process={'capitalize': False})
-        cf.add_text(ax, text='$\\theta$', x=source_center[0] + np.cos(theta/2) * r * 0.4, y=source_center[1] + np.sin(theta/2) * r * 0.4, va='center', ha='center', transform='data')
-
-        ax = ax_dict['d']
-        cf.plt_line(ax, exp_x, exp_y)
-        cf.add_text(ax, text='$EXP(\Lambda)\sim \\frac{1}{\Lambda} e^{-\\frac{d}{\Lambda}}$', x=0.5, y=0.8, va='center', ha='center')
-        cf.set_ax(ax, xlabel='d', ylabel='p(d)', title='EDR', text_process={'capitalize': False})
-        cf.rm_ax_tick(ax)
-        cf.rm_ax_ticklabel(ax)
-
-        ax = ax_dict['e']
-        cf.plt_line(ax, uniform_x, uniform_y)
-        cf.add_text(ax, text='$U(-\pi, \pi)\sim \\frac{1}{2\pi}$', x=0.5, y=0.8, va='center', ha='center')
-        cf.set_ax(ax, xlabel='$\\theta$', ylabel='p($\\theta$)', title='UAR')
-        cf.rm_ax_tick(ax)
-        cf.rm_ax_ticklabel(ax)
-
-        cf.save_fig(fig, self.figdir+'/fig_1_version1', **self.save_fig_kwargs)
-
-    def fig_1_version2(self):
-        '''
-        生成模型示意图
-        '''
-        animal = 'marmoset'
-        dataset_key = 'majka'
-        animal_info = AnimalInfo(animal, dataset_key)
-        polygon_dict = animal_info.polygon_dict
-        full_name = animal_info.full_name
-        area_center_dict = animal_info.area_center_dict
-        whole_cortex_polygon = animal_info.whole_cortex_polygon
-        point_density = 15
-        Lambda = 2
-        exp_x = np.linspace(0, 10, 1000)
-        exp_y = np.exp(-exp_x/Lambda)/Lambda
-        uniform_x = np.linspace(-np.pi, np.pi, 1000)
-        uniform_y = np.ones(uniform_x.shape) / (2*np.pi)
-        margin = cf.COMPACT_MARGIN.copy()
-        margin['top'] = 0.87
-        margin['bottom'] = 0.13
-
-        fig, axes = cf.get_fig_ax(ncols=5, nrows=2, margin=margin, ax_width=cf.AX_WIDTH*0.6, ax_height=cf.AX_HEIGHT*0.57)
-
-        ax_dict = {}
-        ax_dict['a'] = axes[0, 0]
-        ax_dict['b'] = axes[1, 0]
-        ax_dict['c'] = cf.merge_ax(axes[0:2, 1:3])
-        ax_dict['d'] = cf.merge_ax(axes[0:2, 3:5])
-        cf.move_ax(ax_dict['a'], d_bottom=-0.05)
-        cf.move_ax(ax_dict['b'], d_top=-0.05)
-
-        cf.add_axes_dict_tag(axes_dict=ax_dict, ref_ax=axes[0, 0])
-
-        ax = ax_dict['a']
-        cf.plt_line(ax, uniform_x, uniform_y)
-        cf.add_text(ax, text='$U(-\pi, \pi)\sim \\frac{1}{2\pi}$', x=0.5, y=0.8, va='center', ha='center')
-        cf.set_ax(ax, xlabel='$\\theta$', ylabel='p($\\theta$)', title='UAR')
-        cf.rm_ax_tick(ax)
-        cf.rm_ax_ticklabel(ax)
-
-        ax = ax_dict['b']
-        cf.plt_line(ax, exp_x, exp_y)
-        cf.add_text(ax, text='$EXP(\Lambda)\sim \\frac{1}{\Lambda} e^{-\\frac{d}{\Lambda}}$', x=0.5, y=0.8, va='center', ha='center')
-        cf.set_ax(ax, xlabel='d', ylabel='p(d)', title='EDR', text_process={'capitalize': False})
-        cf.rm_ax_tick(ax)
-        cf.rm_ax_ticklabel(ax)
-
-        ax = ax_dict['c']
-        show_whole_cortex_boundary(ax, animal, dataset_key)
-
-        s = cf.get_suitable_s(ax, num=int(point_density*whole_cortex_polygon.area)) / 10
-        for area, polygon in polygon_dict.items():
-            points = generate_random_point_in_polygon(polygon, density=point_density, seed=0)
-            cf.plt_scatter(ax, points[:, 0], points[:, 1], color=cf.GRAY, s=s, zorder=-1, alpha=0.5)
-        
-        for seed in [17]:
-            rng = cf.get_local_rng(seed=seed)
-            source_point = generate_random_point_in_polygon(whole_cortex_polygon, density=0.1, rng=rng)[0]
-            angle = 40 / (180) * np.pi
-            distance = Lambda * 5
-            target_point = source_point + np.array([np.cos(angle) * distance, np.sin(angle) * distance])
-            cf.add_arrow(ax, x_start=source_point[0], y_start=source_point[1], x_end=target_point[0], y_end=target_point[1], fc=cf.BLACK, ec=cf.BLACK)
-            cf.add_arc_patch(ax, source_point, distance * 0.3, 0, angle, facecolor=cf.BLACK, edgecolor=cf.BLACK)
-            cf.plt_line(ax, [source_point[0], source_point[0] + distance], [source_point[1], source_point[1]], color=cf.BLACK, linestyle='--')
-            cf.add_text(ax, text='$\\theta$', x=source_point[0] + np.cos(angle/2) * distance * 0.4, y=source_point[1] + np.sin(angle/2) * distance * 0.4, va='center', ha='center', transform='data', fontsize=cf.LABEL_SIZE)
-            cf.add_text(ax, text='d', x=(source_point[0] + target_point[0])/2, y=(source_point[1] + target_point[1])/2, va='bottom', ha='right', transform='data', text_process={'capitalize': False}, fontsize=cf.LABEL_SIZE)
-
-        ax = ax_dict['d']
-        show_area_boundary(ax, animal, dataset_key)
-
-        # colors = cf.get_random_color(n=len(full_name), cmap=cf.HEATMAP_CMAP, seed=3)
-        colors = cf.get_plt_color(n=len(full_name))
-        color_dict = cf.create_dict(full_name, colors)
-        split_color_dict = broadcast_value_to_split_area(color_dict, animal, dataset_key)
-
-        s = cf.get_suitable_s(ax, num=int(point_density*whole_cortex_polygon.area)) / 10
-        for area, polygon in polygon_dict.items():
-            points = generate_random_point_in_polygon(polygon, density=point_density, seed=0)
-            cf.plt_scatter(ax, points[:, 0], points[:, 1], color=split_color_dict[area], s=s, zorder=-1)
-
-        cf.save_fig(fig, self.figdir+'/fig_1_version2', **self.save_fig_kwargs)
-
-    def fig_1_version3(self):
-        '''
-        生成模型示意图
-        '''
-        animal = 'marmoset'
-        dataset_key = 'majka'
-        animal_info = AnimalInfo(animal, dataset_key)
-        polygon_dict = animal_info.polygon_dict
-        full_name = animal_info.full_name
-        area_center_dict = animal_info.area_center_dict
-        whole_cortex_polygon = animal_info.whole_cortex_polygon
-        point_density = 15
-        Lambda = 2
-        exp_x = np.linspace(0, 10, 1000)
-        exp_y = np.exp(-exp_x/Lambda)/Lambda
-        uniform_x = np.linspace(-np.pi, np.pi, 1000)
-        uniform_y = np.ones(uniform_x.shape) / (2*np.pi)
-        margin = cf.COMPACT_MARGIN.copy()
-        margin['top'] = 0.87
-        margin['bottom'] = 0.13
-
-        fig, axes = cf.get_fig_ax(ncols=4, nrows=2, margin=margin, ax_width=cf.AX_WIDTH*0.6, ax_height=cf.AX_HEIGHT*0.57)
-
-        ax_dict = {}
-        ax_dict['a'] = cf.merge_ax(axes[0:2, 0:2])
-        ax_dict['b'] = cf.merge_ax(axes[0:2, 2:4])
-
-        cf.add_axes_dict_tag(axes_dict=ax_dict, ref_ax=axes[0, 0])
-
-        ax = ax_dict['a']
-        cf.add_text(ax, text='$\\theta \sim \mathrm{Uniform}(-\pi, \pi)$', x=0.5, y=1.05, va='center', ha='center', fontsize=cf.LABEL_SIZE)
-        cf.add_text(ax, text='$d \sim \mathrm{Exponential}(\\Lambda)$', x=0.5, y=0.98, va='center', ha='center', fontsize=cf.LABEL_SIZE, text_process={'capitalize': False})
-        show_whole_cortex_boundary(ax, animal, dataset_key)
-
-        s = cf.get_suitable_s(ax, num=int(point_density*whole_cortex_polygon.area)) / 10
-        for area, polygon in polygon_dict.items():
-            points = generate_random_point_in_polygon(polygon, density=point_density, seed=0)
-            cf.plt_scatter(ax, points[:, 0], points[:, 1], color=cf.GRAY, s=s, zorder=-1, alpha=0.5)
-        
-        for seed in [17]:
-            rng = cf.get_local_rng(seed=seed)
-            source_point = generate_random_point_in_polygon(whole_cortex_polygon, density=0.1, rng=rng)[0]
-            angle = 40 / (180) * np.pi
-            distance = Lambda * 5
-            target_point = source_point + np.array([np.cos(angle) * distance, np.sin(angle) * distance])
-            cf.add_arrow(ax, x_start=source_point[0], y_start=source_point[1], x_end=target_point[0], y_end=target_point[1], fc=cf.BLACK, ec=cf.BLACK)
-            cf.add_arc_patch(ax, source_point, distance * 0.3, 0, angle, facecolor=cf.BLACK, edgecolor=cf.BLACK)
-            cf.plt_line(ax, [source_point[0], source_point[0] + distance], [source_point[1], source_point[1]], color=cf.BLACK, linestyle='--')
-            cf.add_text(ax, text='$\\theta$', x=source_point[0] + np.cos(angle/2) * distance * 0.4, y=source_point[1] + np.sin(angle/2) * distance * 0.4, va='center', ha='center', transform='data', fontsize=cf.LABEL_SIZE)
-            cf.add_text(ax, text='d', x=(source_point[0] + target_point[0])/2, y=(source_point[1] + target_point[1])/2, va='bottom', ha='right', transform='data', text_process={'capitalize': False}, fontsize=cf.LABEL_SIZE)
-
-        ax = ax_dict['b']
-        show_area_boundary(ax, animal, dataset_key)
-
-        # colors = cf.get_random_color(n=len(full_name), cmap=cf.HEATMAP_CMAP, seed=3)
-        colors = cf.get_plt_color(n=len(full_name))
-        color_dict = cf.create_dict(full_name, colors)
-        split_color_dict = broadcast_value_to_split_area(color_dict, animal, dataset_key)
-
-        s = cf.get_suitable_s(ax, num=int(point_density*whole_cortex_polygon.area)) / 10
-        for area, polygon in polygon_dict.items():
-            points = generate_random_point_in_polygon(polygon, density=point_density, seed=0)
-            cf.plt_scatter(ax, points[:, 0], points[:, 1], color=split_color_dict[area], s=s, zorder=-1)
-
-        cf.save_fig(fig, self.figdir+'/fig_1_version3', **self.save_fig_kwargs)
-    
-    def fig_1_version4(self):
-        '''
-        生成模型示意图
-        '''
-        animal = 'marmoset'
-        dataset_key = 'majka'
-        animal_info = AnimalInfo(animal, dataset_key)
-        polygon_dict = animal_info.polygon_dict
-        full_name = animal_info.full_name
-        area_center_dict = animal_info.area_center_dict
-        whole_cortex_polygon = animal_info.whole_cortex_polygon
-        point_density = 15
-        Lambda = 2
-        exp_x = np.linspace(0, 10, 1000)
-        exp_y = np.exp(-exp_x/Lambda)/Lambda
-        uniform_x = np.linspace(-np.pi, np.pi, 1000)
-        uniform_y = np.ones(uniform_x.shape) / (2*np.pi)
-        margin = cf.COMPACT_MARGIN.copy()
-        margin['top'] = 0.87
-        margin['bottom'] = 0.13
-
-        fig, axes = cf.get_fig_ax(ncols=3, nrows=2, margin=margin, ax_width=cf.AX_WIDTH*1.15, ax_height=cf.AX_HEIGHT*1.15)
-
-        ax_dict = {}
-        ax_dict['a'] = axes[0, 0]
-        ax_dict['b'] = axes[0, 1]
-        ax_dict['c'] = axes[0, 2]
-        ax_dict['d'] = axes[1, 0]
-        ax_dict['e'] = axes[1, 1]
-        ax_dict['f'] = axes[1, 2]
-
-        cf.add_axes_dict_tag(axes_dict=ax_dict, ref_ax=axes[0, 0])
-
-        ax = ax_dict['a']
-        cf.set_ax(ax, title='Cortical surface')
-        show_whole_cortex_boundary(ax, animal, dataset_key)
-
-        ax = ax_dict['b']
-        cf.set_ax(ax, title='Neuron generation')
-        show_whole_cortex_boundary(ax, animal, dataset_key)
-        s = cf.get_suitable_s(ax, num=int(point_density*whole_cortex_polygon.area)) / 10
-        for area, polygon in polygon_dict.items():
-            points = generate_random_point_in_polygon(polygon, density=point_density, seed=0)
-            cf.plt_scatter(ax, points[:, 0], points[:, 1], color=cf.GRAY, s=s, zorder=-1, alpha=0.5)
-
-        ax = ax_dict['c']
-        cf.set_ax(ax, title='Connection generation methodology')
-        cf.add_text(ax, text='$\\theta \sim \mathrm{Uniform}(-\pi, \pi)$', x=0.5, y=0., va='center', ha='center', fontsize=cf.LABEL_SIZE)
-        cf.add_text(ax, text='$d \sim \mathrm{Exponential}(\\Lambda)$', x=0.5, y=-0.08, va='center', ha='center', fontsize=cf.LABEL_SIZE, text_process={'capitalize': False})
-        show_whole_cortex_boundary(ax, animal, dataset_key)
-
-        # s = cf.get_suitable_s(ax, num=int(point_density*whole_cortex_polygon.area)) / 10
-        # for area, polygon in polygon_dict.items():
-        #     points = generate_random_point_in_polygon(polygon, density=point_density, seed=0)
-        #     cf.plt_scatter(ax, points[:, 0], points[:, 1], color=cf.GRAY, s=s, zorder=-1, alpha=0.5)
-        
-        for source_point, angle, distance in zip([[-8.2,  1.6]], [45 / (180) * np.pi], [Lambda * 5]):
-            target_point = source_point + np.array([np.cos(angle) * distance, np.sin(angle) * distance])
-            cf.plt_scatter(ax, [source_point[0]], [source_point[1]], color=cf.BLACK, s=50, zorder=1)
-            cf.add_arrow(ax, x_start=source_point[0], y_start=source_point[1], x_end=target_point[0], y_end=target_point[1], fc=cf.BLACK, ec=cf.BLACK)
-            cf.add_arc_patch(ax, source_point, distance * 0.3, 0, angle, facecolor=cf.BLACK, edgecolor=cf.BLACK)
-            cf.plt_line(ax, [source_point[0], source_point[0] + distance], [source_point[1], source_point[1]], color=cf.BLACK, linestyle='--')
-            cf.add_text(ax, text='$\\theta$', x=source_point[0] + np.cos(angle/2) * distance * 0.4, y=source_point[1] + np.sin(angle/2) * distance * 0.4, va='center', ha='center', transform='data', fontsize=cf.LABEL_SIZE)
-            cf.add_text(ax, text='d', x=(source_point[0] + target_point[0])/2, y=(source_point[1] + target_point[1])/2, va='bottom', ha='right', transform='data', text_process={'capitalize': False}, fontsize=cf.LABEL_SIZE)
-
-        ax = ax_dict['d']
-        cf.set_ax(ax, title='Atlas registration')
-        show_area_boundary(ax, animal, dataset_key)
-        for source_point, angle, distance in zip([[-8.2,  1.6], [4., 3.5], [-5., 3.]], [45 / (180) * np.pi, 230 / (180) * np.pi, 270 / (180) * np.pi], [Lambda * 5, Lambda * 3, Lambda * 7]):
-            target_point = source_point + np.array([np.cos(angle) * distance, np.sin(angle) * distance])
-            cf.add_arrow(ax, x_start=source_point[0], y_start=source_point[1], x_end=target_point[0], y_end=target_point[1], fc=cf.BLACK, ec=cf.BLACK)
-
-        # colors = cf.get_random_color(n=len(full_name), cmap=cf.HEATMAP_CMAP, seed=3)
-        colors = cf.get_plt_color(n=len(full_name))
-        color_dict = cf.create_dict(full_name, colors)
-        split_color_dict = broadcast_value_to_split_area(color_dict, animal, dataset_key)
-
-        s = cf.get_suitable_s(ax, num=int(point_density*whole_cortex_polygon.area)) / 10
-        for area, polygon in polygon_dict.items():
-            points = generate_random_point_in_polygon(polygon, density=point_density, seed=0)
-            cf.plt_scatter(ax, points[:, 0], points[:, 1], color=split_color_dict[area], s=s, zorder=-1)
-        
-        ax = ax_dict['e']
-        cf.rm_ax_axis(ax)
-        cf.set_ax(ax, title='Connection matrix (model)')
-        left, right, bottom, top = cf.get_ax_position_custom(ax)
-        width = right - left
-        height = top - bottom
-        ax_model = cf.add_ax(fig, left=left+width*0.1, right=right-width*0.1, bottom=bottom+height*0.1, top=top-height*0.1)
-        # data = np.random.randint(0, 5, size=(5, 5))
-        # cf.sns_heatmap(ax, data, cmap=cf.DENSITY_CMAP, cbar=False, show_xtick=False, show_ytick=False)
-        
-        ax = ax_dict['f']
-        cf.rm_ax_axis(ax)
-        cf.set_ax(ax, title='Connection matrix (data)')
-        left, right, bottom, top = cf.get_ax_position_custom(ax)
-        width = right - left
-        height = top - bottom
-        ax_data = cf.add_ax(fig, left=left+width*0.1, right=right-width*0.1, bottom=bottom+height*0.1, top=top-height*0.1)
-        
-        single_visualizer = self.multi_visualizer.get_single_visualizer(cf.cat(animal, dataset_key))
-
-        single_visualizer.data_model_SC(ax_data=ax_data, ax_model=ax_model, show_correlation=False)
-        ax_data.set_title('')
-        ax_model.set_title('')
-
-        padding_between_ax = cf.get_ax_position_custom(ax_data)[0] - cf.get_ax_position_custom(ax_model)[0]
-        # cf.add_double_arrow(ax_model, x_start=0.3, y_start=-0.2, x_end=1.3+padding_between_ax, y_end=-0.2, xycoords='axes fraction', color=cf.BLACK)
-        from matplotlib.patches import ConnectionPatch
-        start = (0.25, -0.02)
-        end = (1.35 + padding_between_ax, -0.02)
-        connection = ConnectionPatch(
-            xyA=start, xyB=end,
-            coordsA="axes fraction", coordsB="axes fraction",
-            arrowstyle="->,head_width=0.5,head_length=0.8",
-            shrinkA=0, shrinkB=0,
-            linewidth=cf.LINE_WIDTH,
-            color=cf.BLACK,
-            connectionstyle="arc3,rad=0.4"
-        )
-        ax_model.add_artist(connection)
-        connection = ConnectionPatch(
-            xyA=end, xyB=start,
-            coordsA="axes fraction", coordsB="axes fraction",
-            arrowstyle="->,head_width=0.5,head_length=0.8",
-            shrinkA=0, shrinkB=0,
-            linewidth=cf.LINE_WIDTH,
-            color=cf.BLACK,
-            connectionstyle="arc3,rad=-0.4"
-        )
-        ax_model.add_artist(connection)
-
-        cf.save_fig(fig, self.figdir+'/fig_1_version4', **self.save_fig_kwargs)
-
-    def fig_1_version5(self):
-        '''
-        生成模型示意图
-        '''
-        animal = 'marmoset'
-        dataset_key = 'majka'
-        animal_info = AnimalInfo(animal, dataset_key)
-        polygon_dict = animal_info.polygon_dict
-        full_name = animal_info.full_name
-        area_center_dict = animal_info.area_center_dict
-        whole_cortex_polygon = animal_info.whole_cortex_polygon
-        point_density = 15
-        Lambda = 2
-        exp_x = np.linspace(0, 10, 1000)
-        exp_y = np.exp(-exp_x/Lambda)/Lambda
-        uniform_x = np.linspace(-np.pi, np.pi, 1000)
-        uniform_y = np.ones(uniform_x.shape) / (2*np.pi)
-        margin = cf.COMPACT_MARGIN.copy()
-        margin['top'] = 0.87
-        margin['bottom'] = 0.13
-
-        fig, axes = cf.get_fig_ax(ncols=3, nrows=2, margin=margin, ax_width=cf.AX_WIDTH*1.15, ax_height=cf.AX_HEIGHT*1.15)
-
-        ax_dict = {}
-        ax_dict['a'] = axes[0, 0]
-        ax_dict['b'] = axes[0, 1]
-        ax_dict['c'] = axes[0, 2]
-        ax_dict['d'] = axes[1, 0]
-        ax_dict['e'] = axes[1, 1]
-
-        cf.add_axes_dict_tag(axes_dict=ax_dict, ref_ax=axes[0, 0])
-
-        ax = ax_dict['a']
-        cf.set_ax(ax, title='Cortical surface')
-        show_whole_cortex_boundary(ax, animal, dataset_key)
-
-        ax = ax_dict['b']
-        cf.set_ax(ax, title='Neuron generation')
-        show_whole_cortex_boundary(ax, animal, dataset_key)
-        s = cf.get_suitable_s(ax, num=int(point_density*whole_cortex_polygon.area)) / 10
-        for area, polygon in polygon_dict.items():
-            points = generate_random_point_in_polygon(polygon, density=point_density, seed=0)
-            cf.plt_scatter(ax, points[:, 0], points[:, 1], color=cf.ORANGE, s=s, zorder=-1, alpha=0.5)
-
-        ax = ax_dict['c']
-        cf.set_ax(ax, title='Connection generation methodology')
-        cf.add_text(ax, text='$\\theta \sim \mathrm{Uniform}(-\pi, \pi)$', x=0.5, y=0., va='center', ha='center', fontsize=cf.LABEL_SIZE)
-        cf.add_text(ax, text='$d \sim \mathrm{Exponential}(\\Lambda)$', x=0.5, y=-0.08, va='center', ha='center', fontsize=cf.LABEL_SIZE, text_process={'capitalize': False})
-        show_whole_cortex_boundary(ax, animal, dataset_key)
-
-        s = cf.get_suitable_s(ax, num=int(point_density*whole_cortex_polygon.area)) / 10
-        for area, polygon in polygon_dict.items():
-            points = generate_random_point_in_polygon(polygon, density=point_density, seed=0)
-            cf.plt_scatter(ax, points[:, 0], points[:, 1], color=cf.ORANGE, s=s, zorder=-1, alpha=0.5)
-        
-        for source_point, angle, distance in zip([[-8.2,  1.6]], [45 / (180) * np.pi], [Lambda * 5]):
-            target_point = source_point + np.array([np.cos(angle) * distance, np.sin(angle) * distance])
-            cf.plt_scatter(ax, [source_point[0]], [source_point[1]], color=cf.BLACK, s=50, zorder=1)
-            cf.add_arrow(ax, x_start=source_point[0], y_start=source_point[1], x_end=target_point[0], y_end=target_point[1], fc=cf.BLACK, ec=cf.BLACK)
-            cf.add_arc_patch(ax, source_point, distance * 0.3, 0, angle, facecolor=cf.BLACK, edgecolor=cf.BLACK)
-            cf.plt_line(ax, [source_point[0], source_point[0] + distance], [source_point[1], source_point[1]], color=cf.BLACK, linestyle='--')
-            cf.add_text(ax, text='$\\theta$', x=source_point[0] + np.cos(angle/2) * distance * 0.4, y=source_point[1] + np.sin(angle/2) * distance * 0.4, va='center', ha='center', transform='data', fontsize=cf.LABEL_SIZE)
-            cf.add_text(ax, text='d', x=(source_point[0] + target_point[0])/2, y=(source_point[1] + target_point[1])/2, va='bottom', ha='right', transform='data', text_process={'capitalize': False}, fontsize=cf.LABEL_SIZE)
-
-        ax = ax_dict['d']
-        cf.set_ax(ax, title='Atlas registration')
-        show_area_boundary(ax, animal, dataset_key)
-        for source_point, angle, distance in zip([[-8.2,  1.6], [4., 3.5], [-5., 3.], [6.7, 2.5], [-13, 5.], [9.8, 6.], [10.5, 7.], [7., -4.], [0., -5.]], [45 / (180) * np.pi, 230 / (180) * np.pi, 270 / (180) * np.pi, 315 / (180) * np.pi, 10 / (180) * np.pi, 170 / (180) * np.pi, 120 / (180) * np.pi, -10 / (180) * np.pi, -30 / (180) * np.pi], [Lambda * 5, Lambda * 3, Lambda * 7, Lambda * 4, Lambda * 1.5, Lambda * 2.5, Lambda * 1.8, Lambda * 2.9, Lambda * 2.2]):
-            target_point = source_point + np.array([np.cos(angle) * distance, np.sin(angle) * distance])
-            cf.add_arrow(ax, x_start=source_point[0], y_start=source_point[1], x_end=target_point[0], y_end=target_point[1], fc=cf.BLACK, ec=cf.BLACK)
-
-        s = cf.get_suitable_s(ax, num=int(point_density*whole_cortex_polygon.area)) / 10
-        for area, polygon in polygon_dict.items():
-            points = generate_random_point_in_polygon(polygon, density=point_density, seed=0)
-            cf.plt_scatter(ax, points[:, 0], points[:, 1], color=cf.ORANGE, s=s, zorder=-1, alpha=0.5)
-        
-        ax_model = ax_dict['e']
-        single_visualizer = self.multi_visualizer.get_single_visualizer(cf.cat(animal, dataset_key))
-        selected_target_area_list = animal_info.source_name
-        single_visualizer.connection_by_arrows_on_flatmap(ax=ax_model, data_or_model='model', selected_target_area_list=selected_target_area_list)
-        ax_model.set_title('Area level connection')
-
-        cf.save_fig(fig, self.figdir+'/fig_1_version5', **self.save_fig_kwargs)
-
     def fig_1(self):
         '''
         生成模型示意图
@@ -4497,16 +4052,16 @@ class PaperFig:
         get_suitable_fig_size_kwargs = {'nrows': 3, 'which': 'adjust_params_custom'}
         fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_fig_size_kwargs)
         rm_longrange_kwargs_list = []
-        data_anlge_uniform_index_with_distance_threshold_kwargs_list = []
+        data_angle_uniform_index_with_distance_threshold_kwargs_list = []
         category_longrange_SC_kwargs_list = []
         for title, ax in ax_dict.items():
             rm_longrange_kwargs_list.append({'ax': ax[0], 'dim': '2D'})
             distance_threshold_list = np.linspace(0, np.nanmax(self.multi_visualizer.get_single_visualizer(title).animal_info.distance_2D.values), 40)[:-2]
-            data_anlge_uniform_index_with_distance_threshold_kwargs_list.append({'ax': ax[1], 'distance_threshold_list': distance_threshold_list})
+            data_angle_uniform_index_with_distance_threshold_kwargs_list.append({'ax': ax[1], 'distance_threshold_list': distance_threshold_list})
             category_longrange_SC_kwargs_list.append({'ax': ax[2]})
         self.multi_visualizer.multi_ax_plot_by_single_visualizer('rm_longrange_correlation_change', rm_longrange_kwargs_list)
         self.multi_visualizer.multi_ax_plot_by_single_visualizer('category_long_range_SC', category_longrange_SC_kwargs_list)
-        self.multi_visualizer.multi_ax_plot_by_single_visualizer('data_anlge_uniform_index_with_distance_threshold', data_anlge_uniform_index_with_distance_threshold_kwargs_list)
+        self.multi_visualizer.multi_ax_plot_by_single_visualizer('data_angle_uniform_index_with_distance_threshold', data_angle_uniform_index_with_distance_threshold_kwargs_list)
         for title, ax in ax_dict.items():
             ax[1].set_xlim(ax[0].get_xlim())
         self.multi_visualizer.add_tag(row_first=False)
@@ -4514,7 +4069,7 @@ class PaperFig:
         # self.multi_visualizer.rm_redundant_xylabel()
         self.multi_visualizer.save_fig(self.figdir+'/fig_6')
 
-    def PNAS_fig_5(self):
+    def distance_analysis_fig(self):
         '''
         distance analysis
         '''
@@ -4530,24 +4085,24 @@ class PaperFig:
         self.multi_visualizer.multi_ax_plot_by_single_visualizer('category_long_range_SC', category_longrange_SC_kwargs_list)
         self.multi_visualizer.add_tag(row_first=False)
         self.multi_visualizer.add_subfig_title(y=1.05)
-        self.multi_visualizer.save_fig(self.figdir+'/PNAS_fig_5')
+        self.multi_visualizer.save_fig(self.figdir+'/distance_analysis_fig')
 
-    def PNAS_SI_fig_8(self):
+    def angle_uniformity_fig(self):
         '''
         distance analysis
         '''
         get_ax_kwargs = {'nrows': 1}
         get_suitable_fig_size_kwargs = {'nrows': 1, 'which': 'adjust_params_custom'}
         fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_fig_size_kwargs)
-        data_anlge_uniform_index_with_distance_threshold_kwargs_list = []
+        data_angle_uniform_index_with_distance_threshold_kwargs_list = []
         for title, ax in ax_dict.items():
             distance_threshold_list = np.linspace(0, np.nanmax(self.multi_visualizer.get_single_visualizer(title).animal_info.distance_2D.values), 40)[:-2]
-            data_anlge_uniform_index_with_distance_threshold_kwargs_list.append({'ax': ax, 'distance_threshold_list': distance_threshold_list})
-        self.multi_visualizer.multi_ax_plot_by_single_visualizer('data_anlge_uniform_index_with_distance_threshold', data_anlge_uniform_index_with_distance_threshold_kwargs_list)
+            data_angle_uniform_index_with_distance_threshold_kwargs_list.append({'ax': ax, 'distance_threshold_list': distance_threshold_list})
+        self.multi_visualizer.multi_ax_plot_by_single_visualizer('data_angle_uniform_index_with_distance_threshold', data_angle_uniform_index_with_distance_threshold_kwargs_list)
         self.multi_visualizer.add_tag(row_first=False)
         self.multi_visualizer.add_subfig_title(y=1.05)
         # self.multi_visualizer.rm_redundant_xylabel()
-        self.multi_visualizer.save_fig(self.figdir+'/PNAS_SI_fig_8')
+        self.multi_visualizer.save_fig(self.figdir+'/angle_uniformity_fig')
 
     def fig_7(self):
         '''

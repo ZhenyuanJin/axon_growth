@@ -1,3 +1,6 @@
-# 忽略 test文件夹
+# Ignore tests and generated Python files.
 test/
 results/
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
