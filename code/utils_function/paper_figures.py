@@ -191,10 +191,10 @@ def plot_source_points_by_target_position(ax, source_points, target_points, posi
     cf.add_circle_patch(ax, center=position, radius=radius, edgecolor=cf.WHITE, facecolor=cf.WHITE)
 
 
-def plot_removed_long_range_correlation(ax, distance_matrix, data_matrix, model_matrix, animal, dataset_key, lambda_value, point_num=100, removal_mode='data'):
+def plot_removed_long_range_correlation(ax, distance_matrix, data_matrix, model_matrix, animal, dataset_key, lambda_value, removed_value, point_num=100, removal_mode='data'):
     logged_model = uf.log_SC(model_matrix, animal, dataset_key, apply_c=True, apply_w=True)
     logged_data = uf.log_SC(data_matrix, animal, dataset_key, apply_c=True, apply_w=True)
-    correlations = uf.get_rm_longrange_correlation_change(logged_data, logged_model, distance_matrix, animal, dataset_key, point_num=point_num, rm_mode=removal_mode)
+    correlations = uf.get_rm_longrange_correlation_change(logged_data, logged_model, distance_matrix, animal, dataset_key, removed_value, point_num=point_num, rm_mode=removal_mode)
     cf.plt_line(ax, x=np.linspace(0, np.nanmax(distance_matrix.values), point_num), y=correlations, color=cf.ORANGE)
     cf.add_vline(ax, x=lambda_value * 5, color=cf.RED, linestyle='--', label=r'$5\Lambda$')
     cf.set_ax(ax, xlabel='Threshold (mm)', ylabel='Correlation', legend_loc='lower right')
@@ -551,7 +551,7 @@ class PaperFig:
         for name in self.dataset_name_list:
             animal_info = self.animal_info_by_name[name]
             axes = axes_by_name[name]
-            plot_removed_long_range_correlation(axes[0], animal_info.distance_2D, self.data_matrix_by_name[name], self.masked_model_matrix_by_name[name], animal_info.animal, animal_info.dataset_key, self.model_by_name[name].get_unique_Lambda())
+            plot_removed_long_range_correlation(axes[0], animal_info.distance_2D, self.data_matrix_by_name[name], self.masked_model_matrix_by_name[name], animal_info.animal, animal_info.dataset_key, self.model_by_name[name].get_unique_Lambda(), animal_info.w)
             plot_category_long_range_connection(axes[1], self.get_long_range_sum(name))
         add_multi_panel_tags(axes_by_name, self.dataset_name_list, row_first=False)
         add_multi_panel_titles(subfigures, self.dataset_name_list, self.animal_list, y=1.05)

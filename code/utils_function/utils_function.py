@@ -2153,14 +2153,19 @@ def area_level_correlation(SC_data, SC_model, animal, dataset_key, diagonal=Fals
     return corr_dict
 
 
-def get_rm_longrange_correlation_change(SC_data, SC_model, distance_matrix, animal, dataset_key, point_num=100, rm_mode='data'):
+def get_matrix_without_longrange_connections(connection_matrix, distance_matrix, threshold, replacement_value):
+    """Return a deterministic matrix copy with entries beyond the threshold replaced."""
+    local_matrix = connection_matrix.copy()
+    local_matrix[distance_matrix > threshold] = replacement_value
+    return local_matrix
+
+
+def get_rm_longrange_correlation_change(SC_data, SC_model, distance_matrix, animal, dataset_key, removed_value, point_num=100, rm_mode='data'):
     max_distance = np.nanmax(distance_matrix.values)
     corr_list = []
     for threshold in np.linspace(0, max_distance, point_num):
-        SC_data_threshold = SC_data.copy()
-        SC_model_threshold = SC_model.copy()
-        SC_data_threshold[distance_matrix > threshold] = 0
-        SC_model_threshold[distance_matrix > threshold] = 0
+        SC_data_threshold = get_matrix_without_longrange_connections(SC_data, distance_matrix, threshold, removed_value)
+        SC_model_threshold = get_matrix_without_longrange_connections(SC_model, distance_matrix, threshold, removed_value)
         if rm_mode == 'data' or rm_mode == 'both':
             SC_data_to_use = SC_data_threshold
         else:

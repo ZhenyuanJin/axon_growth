@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 from utils_function import utils_function as uf
 
 
@@ -42,3 +43,12 @@ def test_saved_run_can_skip_large_simulation_arrays(tmp_path):
     loaded.set_timedir(saved.run_dir, load_simulation=False)
     assert loaded.simulation_results == {}
     assert loaded.SC_model_dict.keys() == saved.SC_model_dict.keys()
+
+
+def test_removed_connections_use_explicit_logged_floor():
+    connection_matrix = pd.DataFrame([[1.2, 2.3], [3.4, 4.5]])
+    distance_matrix = pd.DataFrame([[0.0, 2.0], [3.0, 0.0]])
+    result = uf.get_matrix_without_longrange_connections(connection_matrix, distance_matrix, threshold=1.0, replacement_value=0.9)
+    expected = pd.DataFrame([[1.2, 0.9], [0.9, 4.5]])
+    assert result.equals(expected)
+    assert connection_matrix.iloc[0, 1] == 2.3
