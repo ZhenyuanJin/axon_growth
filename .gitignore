@@ -1,7 +1,8 @@
-# Ignore tests and generated Python files.
+# Ignore generated files and local repository instructions.
 test/
 results/
 __pycache__/
 *.py[cod]
 .ipynb_checkpoints/
 code/visualization/paper_fig_test.ipynb
+/AGENTS.md

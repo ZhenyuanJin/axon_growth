@@ -1,11 +1,10 @@
-import sys
-sys.path.append('../utils_function/')
-import utils_function as uf
-import common_functions as cf
-import pandas as pd
-import numpy as np
 import os
 from itertools import product
+
+import numpy as np
+import pandas as pd
+from utils_function import cf
+from utils_function import utils_function as uf
 
 
 def get_Lambda_range(animal, dataset_key):
@@ -43,8 +42,8 @@ def main(params):
     model.SC_model_dict
 
 
-# animal_list = ['mouse', 'marmoset', 'macaque', 'human', 'marmoset']
-# dataset_key_list = ['gamanut', 'majka', 'markov40', 'lariviere', 'V4']
+
+
 animal_list = ['mouse', 'marmoset', 'macaque', 'human']
 dataset_key_list = ['gamanut', 'majka', 'markov40', 'lariviere']
 params_list = []

@@ -1,89 +1,30 @@
-# region import
-# 标准库导入
-import subprocess
+
+
+import contextlib
+import copy
 import os
 import re
-import sys
-import json
-import pickle
-import joblib
-import random
-import shutil
-import time
-import datetime
-import warnings
-from math import ceil
-import multiprocessing
-from multiprocessing import Process
-from pathlib import Path
-import inspect
-import types
-from functools import wraps, partial
-import importlib
-from concurrent.futures import ProcessPoolExecutor, as_completed
-from io import StringIO
-import copy
-import hashlib
-import json
-import logging
-from cProfile import Profile
-from pstats import Stats
-import tracemalloc
 from collections import defaultdict
-import pdb
-from tqdm import tqdm
+from pathlib import Path
 
-
-# 数学和科学计算库
+import matplotlib.pyplot as plt
+import nibabel as nib
 import numpy as np
-import math
+import pandas as pd
+import pointpats
 import scipy
 import scipy.stats as st
-from scipy.stats import gaussian_kde, zscore
-from scipy.integrate import quad
-from scipy.sparse import coo_matrix, csr_matrix
-import scipy.sparse as sps
-from scipy.cluster.hierarchy import linkage, leaves_list
-from scipy.spatial.distance import pdist, squareform
-from sklearn.decomposition import PCA, NMF
-import statsmodels
-from statsmodels.tsa.stattools import acf, acovf, ccf
-from statsmodels.distributions.empirical_distribution import ECDF
-from statsmodels.nonparametric.smoothers_lowess import lowess
-
-
-# 数据处理和可视化库
-import pandas as pd
-import seaborn as sns
-import matplotlib as mpl
-import matplotlib.pyplot as plt
-from matplotlib.figure import Figure, SubFigure
-from matplotlib.cm import ScalarMappable
-from matplotlib.ticker import FuncFormatter, ScalarFormatter, LogFormatter, LogFormatterExponent, LogFormatterMathtext, LogFormatterSciNotation, PercentFormatter
-import matplotlib.ticker as ticker
-from matplotlib.colors import BoundaryNorm, Normalize, ListedColormap, SymLogNorm, LogNorm, TwoSlopeNorm
-from matplotlib.gridspec import GridSpec
-import matplotlib.patches as mpatches
-import matplotlib.colors as mcolors
-import matplotlib.collections as mcoll
-import matplotlib.font_manager as fm
-from mpl_toolkits.mplot3d import Axes3D
-from PIL import Image
-import cv2
-from reportlab.pdfgen import canvas
-import imageio
 import shapely.geometry
-import pointpats
-import nibabel as nib
 import SimpleITK as sitk
+from scipy.spatial.distance import pdist
 from sklearn.feature_selection import mutual_info_regression
+from tqdm import tqdm
 
-# 自定义库
-import common_functions as cf
-# endregion
+from . import cf
+from .model_runtime import (ConnectionModel, load_connectivity,
+                            save_connectivity, save_json)
 
-
-# region global_variable
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_COLOR = cf.RED
 TARGET_COLOR = cf.GREEN
 DATA_COLOR = cf.PURPLE
@@ -96,30 +37,24 @@ OPTIMAL_PARAMS = {
     'human_lariviere': {'Lambda': 22.63},
 }
 OPTIMAL_PARAMS['marmoset_V4'] = OPTIMAL_PARAMS['marmoset_majka'].copy()
-# endregion
 
 
-# region pre_process
+
+
 def coords_to_polygon(x, y):
-    '''
-    将coords转换为polygon
-    '''
     return shapely.geometry.Polygon(np.column_stack((x, y)))
 
 
 def organize_txt_coords(filename):
-    '''
-    将txt格式的coords数据整理
-    '''
     name_position_start = str(filename).rfind('/')
     name_position_end = str(filename).find('.txt')
     name = str(filename)[name_position_start+1: name_position_end]
 
     txt_content = cf.load_txt(filename)
-    txt_content = [l for l in txt_content if l != ''] # 去掉空行
-    txt_content = [l.split() for l in txt_content] # 按空格分割
-    txt_content = [[float(item) for item in l] for l in txt_content] # 转为float
-    txt_content = np.array(txt_content) # 转为np.array
+    txt_content = [l for l in txt_content if l != '']
+    txt_content = [l.split() for l in txt_content]
+    txt_content = [[float(item) for item in l] for l in txt_content]
+    txt_content = np.array(txt_content)
     vx, vy = txt_content[:, 0], txt_content[:, 1]
 
     coords = np.array([np.array([i,j]) for i, j in zip(vx, vy)])
@@ -129,14 +64,11 @@ def organize_txt_coords(filename):
 
 
 def generate_coords_polygon(animal, dataset_key):
-    '''
-    生成coords的polygon数据,并且保存
-    '''
     animal_dir = AnimalDir(animal, dataset_key)
 
     cf.mkdir(animal_dir.area_coords_dir)
 
-    # 获取每个area
+
     coords_dict = {}
     polygon_dict = {}
     for filename in cf.get_subfile(animal_dir.raw_area_coords_dir):
@@ -149,7 +81,7 @@ def generate_coords_polygon(animal, dataset_key):
     cf.save_dict(coords_dict, animal_dir.area_coords_dir + 'coords_dict')
     cf.save_dict(polygon_dict, animal_dir.area_coords_dir + 'polygon_dict')
 
-    # 获取whole_cortex
+
     for filename in cf.get_subfile(animal_dir.raw_whole_cortex_coords_dir):
         r = organize_txt_coords(filename)
         whole_cortex_coords, whole_cortex_polygon = r['coords'], r['polygon']
@@ -160,18 +92,15 @@ def generate_coords_polygon(animal, dataset_key):
 
 
 def generate_area_center(animal, dataset_key, density=100):
-    '''
-    获取脑区中心坐标(在内部随机生成点,获取重心)
-    '''
     animal_info = AnimalInfo(animal, dataset_key)
     polygon_dict = animal_info.polygon_dict
-    
-    # 固定随机种子
+
+
     seed = 0
 
     area_center_dict = {}
     for area, polygon in polygon_dict.items():
-        points = generate_random_point_in_polygon(polygon=polygon, density=density, seed=seed)
+        points = get_random_points_in_polygon(polygon=polygon, density=density, seed=seed)
         cx, cy = np.mean(points[:, 0]), np.mean(points[:, 1])
         area_center_dict[area] = np.array([cx,cy])
     cf.save_dict(area_center_dict, animal_info.area_coords_dir + 'area_center_dict')
@@ -189,7 +118,7 @@ def get_area_voxel_3D(animal, dataset_key):
         for idx in areas.index:
             modified_area_to_index[areas.loc[idx, 'area_name']] = idx + 1
         for brain_area in full_name:
-            # 把脑区对应到数字
+
             s = modified_area_to_index[brain_area]
             voxels = np.array(np.where(atlas==s)).T * 0.025
             area_voxel_dict[brain_area] = voxels
@@ -214,13 +143,13 @@ def get_area_voxel_3D(animal, dataset_key):
         mha_array = sitk.GetArrayFromImage(mha_image)
         spacing = mha_image.GetSpacing()
         for i in range(1, len(full_name)+1):
-            # 从1开始因为0对应的是没有脑子的地方
+
             brain_area = macaque_voxel_value_to_area_name(i)
             voxels = np.array(np.where(mha_array==i)).T
             area_voxel_dict[brain_area] = voxels * np.array([spacing[2], spacing[1], spacing[0]])
     if animal == 'human' and dataset_key == 'lariviere':
         def number_to_area_name(index, brain_type):
-            # 不区分左右脑区,所以把'R_', 'L_'直接去掉
+
             atlas = pd.read_csv(animal_info.raw_3D_data_dir+'/Atlas.csv')
             if brain_type=='R':
                 if index!=0:
@@ -241,10 +170,10 @@ def get_area_voxel_3D(animal, dataset_key):
         img = nib.load(animal_info.raw_3D_data_dir+'/cortex_ColeAnticevic_NetPartition_GlasserParcels_L.label.gii')
         labels = img.darrays[0].data
 
-        unique_labels = np.unique(labels)  # 获取所有唯一的标签值
+        unique_labels = np.unique(labels)
 
         for label in unique_labels:
-            # 找到属于当前标签的点的索引
+
             mask = (labels == label)
             points_with_label = coord_L[mask]
 
@@ -265,11 +194,8 @@ def generate_area_center_3D(animal, dataset_key):
 
 
 def generate_name_location(animal, dataset_key):
-    '''
-    生成脑区名字和位置的对应关系(此位置保证name在polygon内部,且较美观)
-    '''
     animal_info = AnimalInfo(animal, dataset_key)
-    
+
     area_center_dict = generate_area_center(animal, dataset_key)
     name_location_dict = area_center_dict.copy()
     cf.save_dict(name_location_dict, animal_info.area_coords_dir + 'name_location_dict')
@@ -277,9 +203,6 @@ def generate_name_location(animal, dataset_key):
 
 
 def generate_angle_matrix(animal, dataset_key, dim='2D'):
-    '''
-    生成角度矩阵,2D返回的是df,3D返回的是dict,其中'azim'和'elev'是两个df
-    '''
     animal_info = AnimalInfo(animal, dataset_key)
     if dim == '2D':
         area_center_dict = animal_info.area_center_dict
@@ -304,9 +227,6 @@ def generate_angle_matrix(animal, dataset_key, dim='2D'):
 
 
 def generate_distance_matrix(animal, dataset_key, dim='2D'):
-    '''
-    生成距离矩阵
-    '''
     animal_info = AnimalInfo(animal, dataset_key)
     if dim == '2D':
         area_center_dict = animal_info.area_center_dict
@@ -329,9 +249,6 @@ def generate_distance_matrix(animal, dataset_key, dim='2D'):
 
 
 def generate_clean_area_category(animal, dataset_key):
-    '''
-    生成area的category数据,整理成一样的格式
-    '''
     animal_info = AnimalInfo(animal, dataset_key)
     area_category = cf.load_df(animal_info.raw_area_category_dir + 'area_category')
     clean_area_category = {}
@@ -352,18 +269,18 @@ def generate_clean_area_category(animal, dataset_key):
         clean_area_category['MM'] = 'Limbic'
     elif animal_info.animal_and_dataset_key == 'marmoset_majka':
         category_map = {
-        'Visual': 'Occipital', 
-        'Insula and rostral lateral sulcus': 'Insular', 
-        'Lateral and inferior temporal': 'Temporal', 
-        'Orbitofrontal': 'Prefrontal', 
-        'Motor and premotor': 'Frontal', 
-        'Posterior cingulate, medial, and retrosplenial': 'Limbic', 
-        'Medial prefrontal': 'Prefrontal', 
-        'Auditory': 'Temporal', 
-        'Somatosensory': 'Parietal', 
-        'Ventral temporal': 'Temporal', 
-        'Posterior parietal': 'Parietal', 
-        'Ventrolateral prefrontal': 'Prefrontal', 
+        'Visual': 'Occipital',
+        'Insula and rostral lateral sulcus': 'Insular',
+        'Lateral and inferior temporal': 'Temporal',
+        'Orbitofrontal': 'Prefrontal',
+        'Motor and premotor': 'Frontal',
+        'Posterior cingulate, medial, and retrosplenial': 'Limbic',
+        'Medial prefrontal': 'Prefrontal',
+        'Auditory': 'Temporal',
+        'Somatosensory': 'Parietal',
+        'Ventral temporal': 'Temporal',
+        'Posterior parietal': 'Parietal',
+        'Ventrolateral prefrontal': 'Prefrontal',
         'Dorsolateral prefrontal': 'Prefrontal'
         }
         for area, row in area_category.iterrows():
@@ -383,9 +300,6 @@ def generate_clean_area_category(animal, dataset_key):
 
 
 def generate_intrinsic_proportion(animal, datasetkey):
-    '''
-    生成intrinsic_proportion数据
-    '''
     animal_info = AnimalInfo(animal, datasetkey)
     intrinsic_proportion_dict = defaultdict(list)
     if animal_info.animal_and_dataset_key == 'marmoset_majka':
@@ -401,15 +315,12 @@ def generate_intrinsic_proportion(animal, datasetkey):
 
 
 def generate_injection_id_to_area_map(animal, dataset_key):
-    '''
-    将injection_id转换为area
-    '''
     animal_info = AnimalInfo(animal, dataset_key)
     if animal_info.animal_and_dataset_key == 'marmoset_majka':
         SI_table_3 = cf.load_df(animal_info.raw_data_dir + 'SI_table_3')
         injection_id_to_area_map = {}
         for _, row in SI_table_3.iterrows():
-            # 去掉最后一位的X或者R,如果有的话
+
             processed_case = re.sub(r'[XRL]$', '', row['Case'])
             injection_id_to_area_map[cf.cat(processed_case, row['Tracer'], sep='-')] = row['Area']
         cf.save_dict(injection_id_to_area_map, animal_info.injection_to_area_map_dir + 'injection_id_to_area_map')
@@ -420,7 +331,7 @@ def generate_injection_id_to_area_map(animal, dataset_key):
 
 def generate_injection_site(animal, dataset_key, dim='2D'):
     animal_info = AnimalInfo(animal, dataset_key)
-    
+
     injection_site = defaultdict(list)
     if animal_info.animal_and_dataset_key == 'marmoset_majka':
         if dim == '2D':
@@ -437,25 +348,25 @@ def generate_injection_site(animal, dataset_key, dim='2D'):
         return injection_site
     else:
         return NotImplementedError
-# endregion
 
 
-# region load_data
+
+
 class AnimalDir:
     def __init__(self, animal, dataset_key):
         self.animal = animal
         self.dataset_key = dataset_key
         self.animal_and_dataset_key = str(animal) + '_' + str(dataset_key)
 
-        # 原始数据目录
-        self.raw_data_dir = '../../raw_data/' + self.animal_and_dataset_key + '/'
+
+        self.raw_data_dir = str(PROJECT_ROOT / 'raw_data' / self.animal_and_dataset_key) + os.sep
         self.raw_area_coords_dir = self.raw_data_dir + 'area_coords/'
         self.raw_whole_cortex_coords_dir = self.raw_data_dir + 'whole_cortex_coords/'
         self.raw_area_category_dir = self.raw_data_dir + 'area_category/'
         self.raw_3D_data_dir = self.raw_data_dir + 'threeD_data/'
 
-        # 处理后的数据目录
-        self.data_dir = '../../data/' + self.animal_and_dataset_key + '/'
+
+        self.data_dir = str(PROJECT_ROOT / 'data' / self.animal_and_dataset_key) + os.sep
         self.area_coords_dir = self.data_dir + 'area_coords/'
         self.whole_cortex_coords_dir = self.data_dir + 'whole_cortex_coords/'
         self.area_category_dir = self.data_dir + 'area_category/'
@@ -470,13 +381,10 @@ class AnimalDir:
 
 class AnimalInfo(AnimalDir):
     def __init__(self, animal, dataset_key):
-        '''
-        对于基础信息,直接读取;对于要计算的信息,先尝试读取,如果没有,则计算
-        '''
         super().__init__(animal, dataset_key)
         self.force_re_preprocess = False
-        # self.force_re_preprocess = True
-        self._re_preprocess_dict = {} # 运行过的计算,标记为True
+
+        self._re_preprocess_dict = {}
 
         SC_type_dict = {'mouse_gamanut': 'FLNe', 'marmoset_majka': 'FLNe', 'marmoset_V4': 'FLNe', 'macaque_markov29': 'FLNe', 'macaque_markov40': 'FLNe', 'human_lariviere': 'Dmri'}
         self.SC_type = SC_type_dict[self.animal_and_dataset_key]
@@ -491,26 +399,17 @@ class AnimalInfo(AnimalDir):
 
         self.clustered_source_name, self.clustered_target_name, self.clustered_full_name = get_source_target_full_name_in_clustered_order(self.animal, self.dataset_key)
 
-        self.column_mode = 'target' # never be source, this project is always target
+        self.column_mode = 'target'
 
     def set_force_re_preprocess(self):
-        '''
-        强制重新运行所有的计算
-        '''
         self.force_re_preprocess = True
 
     def _update_re_preprocess_dict(self, prop_name):
-        '''
-        更新re_preprocess_dict
-        '''
         self._re_preprocess_dict[prop_name] = True
 
     def _raise_for_force_re_preprocess(self, prop_name):
-        '''
-        当force_re_preprocess时退出尝试
-        '''
         if self.force_re_preprocess and not self._re_preprocess_dict.get(prop_name, False):
-            # raise error, 从而退出try
+
             raise ValueError('force_re_preprocess')
 
     @property
@@ -529,25 +428,15 @@ class AnimalInfo(AnimalDir):
 
     @property
     def coords_dict(self):
-        '''
-        注意:
-        
-        key是split的name
-        '''
         try:
             self._raise_for_force_re_preprocess('coords_dict')
             return load_coords_dict(self.animal, self.dataset_key)
         except:
             self._update_re_preprocess_dict('coords_dict')
             return generate_coords_polygon(self.animal, self.dataset_key)['coords_dict']
-    
+
     @property
     def polygon_dict(self):
-        '''
-        注意:
-        
-        key是split的name
-        '''
         try:
             self._raise_for_force_re_preprocess('polygon_dict')
             return load_polygon_dict(self.animal, self.dataset_key)
@@ -639,19 +528,13 @@ class AnimalInfo(AnimalDir):
     @property
     def neuron_density(self):
         return load_neuron_density(self.animal, self.dataset_key)
-    
+
     @property
     def connection_matrix_vmax(self):
-        '''
-        可视化连接矩阵时的最大值
-        '''
         return 0.2
 
     @property
     def c(self):
-        '''
-        log时的平移系数
-        '''
         if self.animal == 'human':
             return 6
         elif self.animal == 'marmoset' and self.dataset_key == 'Dmri_Tian':
@@ -661,60 +544,48 @@ class AnimalInfo(AnimalDir):
 
     @property
     def w(self):
-        '''
-        当SC为0时,设定的基准值
-        '''
         return 0.9
-    
+
     @property
     def SC_focus_direction(self):
-        '''
-        当分析的时候,关注row还是col
-        '''
         row_animal_and_dataset_key_list = []
         col_animal_and_dataset_key_list = ['mouse_gamanut', 'marmoset_majka', 'marmoset_V4', 'macaque_markov29', 'macaque_markov40', 'human_lariviere']
         if self.animal_and_dataset_key in row_animal_and_dataset_key_list:
             return 'row'
         elif self.animal_and_dataset_key in col_animal_and_dataset_key_list:
             return 'col'
-    
+
     @property
     def SC_data(self):
-        '''
-        读取SC数据
-        '''
         SC = load_SC(self.animal, self.dataset_key)
-        
+
         if self.animal_and_dataset_key in ['human_lariviere']:
-            # normalize 使得总和为area_num (对标FLN)
+
             SC = normalize_SC(SC, animal=self.animal, dataset_key=self.dataset_key)
 
-        # 确保SC按照指定的顺序排列
+
         SC = cf.reorder_df(SC, new_row=self.full_name, new_col=self.full_name)
         return SC
-    
+
     @property
-    def intrinsic_proportion(self):
+    def plot_intrinsic_proportion(self):
         try:
-            self._raise_for_force_re_preprocess('intrinsic_proportion')
+            self._raise_for_force_re_preprocess('plot_intrinsic_proportion')
             return load_intrinsic_proportion(self.animal, self.dataset_key)
         except:
-            self._update_re_preprocess_dict('intrinsic_proportion')
+            self._update_re_preprocess_dict('plot_intrinsic_proportion')
             return generate_intrinsic_proportion(self.animal, self.dataset_key)
-    
+
     @property
     def SCt_data(self):
-        '''
-        读取SCt数据(带有对角线)
-        '''
         if self.animal_and_dataset_key == 'marmoset_majka':
             SC = self.SC_data.copy()
             for t in self.target_name:
                 for s in self.source_name:
                     if s == t:
-                        SC.loc[s, t] = self.intrinsic_proportion[t]
+                        SC.loc[s, t] = self.plot_intrinsic_proportion[t]
                     else:
-                        SC.loc[s, t] = SC.loc[s, t] * (1 - self.intrinsic_proportion[t])
+                        SC.loc[s, t] = SC.loc[s, t] * (1 - self.plot_intrinsic_proportion[t])
             return SC
         else:
             raise NotImplementedError
@@ -736,24 +607,18 @@ class AnimalInfo(AnimalDir):
         except:
             self._update_re_preprocess_dict('injection_id_to_area_map')
             return generate_injection_id_to_area_map(self.animal, self.dataset_key)
-    
+
     @property
     def injection_site_2D(self):
-        '''
-        读取injection_site数据
-        '''
         try:
             self._raise_for_force_re_preprocess('injection_site_2D')
             return load_injection_site(self.animal, self.dataset_key, dim='2D')
         except:
             self._update_re_preprocess_dict('injection_site_2D')
             return generate_injection_site(self.animal, self.dataset_key, dim='2D')
-    
+
     @property
     def injection_site_3D(self):
-        '''
-        读取injection_site数据
-        '''
         try:
             self._raise_for_force_re_preprocess('injection_site_3D')
             return load_injection_site(self.animal, self.dataset_key, dim='3D')
@@ -763,82 +628,52 @@ class AnimalInfo(AnimalDir):
 
 
 def load_coords_dict(animal, dataset_key):
-    '''
-    读取coords数据
-    '''
     animal_dir = AnimalDir(animal, dataset_key)
     return cf.load_pkl(animal_dir.area_coords_dir + 'coords_dict')
 
 
 def load_polygon_dict(animal, dataset_key):
-    '''
-    读取polygon数据
-    '''
     animal_dir = AnimalDir(animal, dataset_key)
     return cf.load_pkl(animal_dir.area_coords_dir + 'polygon_dict')
 
 
 def load_whole_cortex_coords(animal, dataset_key):
-    '''
-    读取whole_cortex_coords数据
-    '''
     animal_dir = AnimalDir(animal, dataset_key)
     return cf.load_pkl(animal_dir.area_coords_dir + 'whole_cortex_coords')
 
 
 def load_whole_cortex_polygon(animal, dataset_key):
-    '''
-    读取whole_cortex_polygon数据
-    '''
     animal_dir = AnimalDir(animal, dataset_key)
     return cf.load_pkl(animal_dir.area_coords_dir + 'whole_cortex_polygon')
 
 
 def load_area_center_dict(animal, dataset_key):
-    '''
-    读取area_center数据
-    '''
     animal_dir = AnimalDir(animal, dataset_key)
     return cf.load_pkl(animal_dir.area_coords_dir + 'area_center_dict')
 
 
 def load_area_center_dict_3D(animal, dataset_key):
-    '''
-    读取area_center_3D数据
-    '''
     animal_dir = AnimalDir(animal, dataset_key)
     return cf.load_pkl(animal_dir.threeD_data_dir + 'area_center_dict_3D')
 
 
 def load_name_location_dict(animal, dataset_key):
-    '''
-    读取name_location数据
-    '''
     animal_dir = AnimalDir(animal, dataset_key)
     return cf.load_pkl(animal_dir.area_coords_dir + 'name_location_dict')
 
 
 def load_SC(animal, dataset_key):
-    '''
-    读取SC的基本数据
-    '''
     animal_dir = AnimalDir(animal, dataset_key)
     SC = cf.load_df(animal_dir.SC_dir + 'SC_data')
     return SC
 
 
 def load_intrinsic_proportion(animal, dataset_key):
-    '''
-    读取intrinsic_proportion数据
-    '''
     animal_dir = AnimalDir(animal, dataset_key)
     return cf.load_pkl(animal_dir.intrinsic_proportion_dir + 'intrinsic_proportion_dict')
 
 
 def load_angle_matrix(animal, dataset_key, dim='2D'):
-    '''
-    读取angle_matrix数据
-    '''
     animal_dir = AnimalDir(animal, dataset_key)
     if dim == '2D':
         return cf.load_pkl(animal_dir.angle_matrix_dir + 'angle_matrix_2D')
@@ -847,18 +682,12 @@ def load_angle_matrix(animal, dataset_key, dim='2D'):
 
 
 def load_distance_matrix(animal, dataset_key, dim='2D'):
-    '''
-    读取distance_matrix数据
-    '''
     animal_dir = AnimalDir(animal, dataset_key)
     return cf.load_pkl(animal_dir.distance_matrix_dir + 'distance_matrix_' + dim)
 
 
 @cf.to_be_improved
 def load_neuron_density(animal, dataset_key):
-    '''
-    读取neuron_density数据
-    '''
     animal_dir = AnimalDir(animal, dataset_key)
 
 
@@ -867,13 +696,10 @@ def load_neuron_density(animal, dataset_key):
 
 
 def get_source_target_full_name(animal, dataset_key):
-    '''
-    获取source_name, target_name, full_name
-    '''
     animal_and_dataset_key = animal + '_' + dataset_key
 
     if animal_and_dataset_key == 'macaque_markov29':
-        # target_name = ['V1', 'V2', 'V4', 'TEO', 'MT', 'Tepd', 'DP', 'STPc', '7A', 'STPr', 'STPi', 'PBr', '8l', '7m', '46d', '8m', '7B', '946d', '946v', '8B', '10', 'F7', 'F5', '5', 'F2',  '24c', 'ProM', '2', 'F1']
+
         target_name = ['V1', 'V2', 'V4', 'DP', 'MT', '8m', '5', '8l', 'TEO', '2', 'F1', 'STPc', '7A', '46d', '10', '946v', '946d', 'F5', 'Tepd', 'PBr', '7m', '7B', 'F2', 'STPi', 'ProM', 'F7', '8B', 'STPr', '24c']
         source_name = ['10', '11', '12', '13', '14', '1', '23', '24a', '24b', '24c', '24d', '25', '2930', '2', '31', '32', '3', '44', '45A', '45B', '46d', '46v', '5', '7A', '7B', '7m', '7op', '8B', '8l', '8m', '8r', '946d', '946v', '9', 'AIP', 'CORE', 'DP', 'ENTORHINAL', 'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'FST', 'Gu', 'INSULA', 'IPa', 'LB', 'LIP', 'MB', 'MIP', 'MST', 'MT', 'OPAI', 'OPRO', 'PBc', 'PBr', 'PERIRHINAL', 'PGa', 'PIP', 'PIRIFORM', 'Pi', 'Pro.St.', 'ProM', 'SII', 'STPc', 'STPi', 'STPr', 'SUBICULUM', 'TEMPORAL_POLE', 'TEO', 'TEOm', 'TEad', 'TEama', 'TEamp', 'TEav', 'TEpv', 'THTF', 'TPt', 'Tepd', 'V1', 'V2', 'V3A', 'V3', 'V4', 'V4t', 'V6A', 'V6', 'VIP']
 
@@ -883,7 +709,7 @@ def get_source_target_full_name(animal, dataset_key):
 
     if animal_and_dataset_key == 'marmoset_majka':
         target_name = ['A1-2', 'A10', 'A11', 'A19DI', 'A19M', 'A23a', 'A23b', 'A23c', 'A24d', 'A32', 'A32V', 'A3a', 'A3b', 'A45', 'A46D', 'A47L', 'A4ab', 'A4c', 'A6DC', 'A6DR', 'A6M', 'A6Va', 'A8C', 'A8aD', 'A8aV', 'A8b', 'A9', 'AIP', 'AuA1', 'AuCM', 'AuCPB', 'AuML', 'AuRT', 'LIP', 'MIP', 'MST', 'OPt', 'PE', 'PEC', 'PF', 'PFG', 'PG', 'PGM', 'PGa-IPa', 'S2E', 'TE3', 'TEO', 'TPO', 'V1', 'V2', 'V3A', 'V4', 'V4T', 'V5', 'V6']
-        # coords_target_name = ['A1-2', 'A10', 'A11', 'A19DI', 'A19M', 'A23a', 'A23b', 'A23c--1', 'A23c--2', 'A24d', 'A32', 'A32V', 'A3a', 'A3b', 'A45', 'A46D', 'A47L', 'A4ab', 'A4c', 'A6DC', 'A6DR', 'A6M', 'A6Va', 'A8C', 'A8aD', 'A8aV', 'A8b', 'A9', 'AIP', 'AuA1', 'AuCM', 'AuCPB', 'AuML', 'AuRT', 'LIP', 'MIP', 'MST', 'OPt', 'PE', 'PEC', 'PF', 'PFG', 'PG', 'PGM', 'PGa-IPa', 'S2E', 'TE3', 'TEO', 'TPO', 'V1', 'V2--1', 'V2--2', 'V3A', 'V4', 'V4T', 'V5', 'V6']
+
         source_name = ['A1-2', 'A10', 'A11', 'A13L', 'A13M', 'A13a', 'A13b', 'A14C', 'A14R', 'A19DI', 'A19M', 'A23V', 'A23a', 'A23b', 'A23c', 'A24a', 'A24b', 'A24c', 'A24d', 'A25', 'A29a-c', 'A29d', 'A30', 'A31', 'A32', 'A32V', 'A35', 'A36', 'A3a', 'A3b', 'A45', 'A46D', 'A46V', 'A47L', 'A47M', 'A47O', 'A4ab', 'A4c', 'A6DC', 'A6DR', 'A6M', 'A6Va', 'A6Vb', 'A8C', 'A8aD', 'A8aV', 'A8b', 'A9', 'AI', 'AIP', 'APir', 'AuA1', 'AuAL', 'AuCL', 'AuCM', 'AuCPB', 'AuML', 'AuR', 'AuRM', 'AuRPB', 'AuRT', 'AuRTL', 'AuRTM', 'DI', 'Ent', 'FST', 'GI', 'Gu', 'IPro', 'LIP', 'MIP', 'MST', 'OPAl', 'OPro', 'OPt', 'PE', 'PEC', 'PF', 'PFG', 'PG', 'PGM', 'PGa-IPa', 'PaIL', 'PaIM', 'Pir', 'ProM', 'ProSt', 'ReI', 'S2E', 'S2I', 'S2PR', 'S2PV', 'STR', 'TE1', 'TE2', 'TE3', 'TEO', 'TF', 'TFO', 'TH', 'TL', 'TLO', 'TPO', 'TPPro', 'TPro', 'TPt', 'V1', 'V2', 'V3', 'V3A', 'V4', 'V4T', 'V5', 'V6', 'V6A', 'VIP']
 
     if animal_and_dataset_key == 'marmoset_riken':
@@ -911,9 +737,6 @@ def get_source_target_full_name(animal, dataset_key):
 
 
 def get_source_target_full_name_in_clustered_order(animal, dataset_key):
-    '''
-    获取source_name, target_name, full_name, 按照clustered order
-    '''
     animal_and_dataset_key = animal + '_' + dataset_key
     if animal_and_dataset_key == 'mouse_gamanut':
         clustered_target_name = ['GU', 'SSp-un', 'MOp', 'VISC', 'SSs', 'PL', 'SSp-bfd', 'ACAd', 'RL', 'AL', 'DP', 'AUDpo', 'AM', 'MM', 'V1', 'LM', 'PM', 'P', 'RSPd']
@@ -947,9 +770,6 @@ def get_source_target_full_name_in_clustered_order(animal, dataset_key):
 
 
 def get_full_split_name(name_to_split_name_dict):
-    '''
-    获取full_split_name
-    '''
     full_split_name = []
     for name, name_to_split_name in name_to_split_name_dict.items():
         full_split_name.extend(name_to_split_name)
@@ -957,9 +777,6 @@ def get_full_split_name(name_to_split_name_dict):
 
 
 def get_name_dict(animal, dataset_key):
-    '''
-    Note that for SC matrix, the name of each area is in full_name. However, for coords, they may be divided into several parts, for example, 11--1 and 11--2. Coords names are all_name_coords in code. Sometimes, you need to transform to another type, just use name_to_split_name_dict and split_name_to_name_dict.
-    '''
     animal_and_dataset_key = animal + '_' + dataset_key
     source_name, target_name, full_name = get_source_target_full_name(animal, dataset_key)
     name_to_split_name_dict = {}
@@ -1173,9 +990,6 @@ def get_name_dict(animal, dataset_key):
 
 
 def combine_name(input_name, animal, dataset_key):
-    '''
-    将脑区名合并
-    '''
     combined_name = input_name
     animal_and_dataset_key = animal + '_' + dataset_key
     if animal_and_dataset_key in ['macaque_markov29', 'macaque_markov40']:
@@ -1258,9 +1072,6 @@ def combine_name(input_name, animal, dataset_key):
 
 
 def transform_combined_name(combined_name, source_animal, source_datasetkey, target_animal, target_dataset_key):
-    '''
-    在不同物种之间转换脑区名
-    '''
     combined_name_marmoset_majka_list = ['V1', 'V2', 'V4', 'V5', 'PEC-PE', 'Opt', 'PG-PFG', 'PGM', 'A4ab A4C', 'A6DC', 'A6DR', 'A6Va-A6Vb', 'A10', 'A8b', 'A8aD-A8aV', 'TPO', 'PF', 'A1-2', 'TEO', 'A46D', 'TE3', 'LIP', 'A19M V6', 'A3a-A3b', 'A8C', 'A6M', 'A9', 'A32-A32V', 'A45', 'AuRPB-STR', 'ProM', 'A46V', 'A24C', 'OPro', 'A25', 'AuA1-AuR-AuRT', 'AuCPB', 'AuRM-AuRTM-AuCM', 'AuCL-AuML-AuRTL-AuAL', 'A19DI', 'V4T', 'V3A', 'MST', 'MIP', 'A47L A47M A470', 'A23a A23b A23c A23V', 'PGa-IPa', 'A24d', 'AIP', 'S2I-S2E-S2PV-S2PR', 'A11', 'V3', 'FST', 'TE1', 'TE2', 'TPPro', 'TFO-TLO-TH-TF-TL', 'A36-A35', 'Ent', 'Pir', 'SUB', 'V6A', 'VIP', 'TPt', 'ReI-GI-DI-AI-IPro', 'TPro-PaIL-PaIM', 'A31', 'ProSt', 'A29a-c-A29d-A30', 'A24a', 'A24b', 'A14R-A14C', 'A13a-A13b-A13L-A13M', 'Gu', 'OPAl']
     combined_name_macaque_markov29_list = ['V1', 'V2', 'V4', 'MT', '5', 'DP', '7A', '7m', 'F1', 'F2', 'F7', 'F5-44', '10', '8B', '8m-8l-8r', 'STPr-STPi-STPc', '7B-7op', '1-2', 'TEO-TEOm', '946d-46d', 'Tepd-TEama-TEamp', 'LIP', 'V6', '3', 'F4', 'F3-F6', '9', '32', '45A-45B', 'PBr', 'ProM', '946v-46v', '24c', 'OPRO', '25', 'CORE', 'PBc', 'MB', 'LB', 'PIP', 'V4t', 'V3A', 'MST', 'MIP', '12', '23', 'PGa-IPa', '24d', 'AIP', 'SII', '11', 'V3', 'FST', 'TEav', 'TEad-TEpv', 'TEMPORAL_POLE', 'THTF', 'PIRIFORM', 'ENTORHINAL', 'PIR', 'SUBICULUM', 'V6A', 'VIP', 'TPt', 'INSULA', 'Pi', '31', 'Pro.St.', '2930', '24a', '24b', '14', '13', 'Gu', 'OPAI']
     combined_name_macaque_markov40_list = combined_name_macaque_markov29_list.copy()
@@ -1276,29 +1087,17 @@ def transform_combined_name(combined_name, source_animal, source_datasetkey, tar
 
 
 def load_area_category_dict(animal, dataset_key):
-    '''
-    读取区域的类别信息
-
-    animal: str, 动物名称
-    dataset_key: str, 数据集的名称
-    '''
     animal_dir = AnimalDir(animal, dataset_key)
     return cf.load_pkl(animal_dir.area_category_dir + '/area_category_dict')
 
 
 def get_area_category_in_order():
-    # return ['Occipital', 'Temporal', 'Parietal', 'Limbic', 'Insular', 'Frontal', 'Prefrontal']
-    # return ['Frontal', 'Insular', 'Limbic', 'Occipital', 'Parietal', 'Prefrontal', 'Temporal']
+
+
     return ['Frontal', 'Insular', 'Limbic', 'Occipital', 'Parietal', 'Temporal', 'Prefrontal']
 
 
 def load_injection_id_to_area_map(animal, dataset_key):
-    '''
-    读取注射点的id到区域的映射
-
-    animal: str, 动物名称
-    dataset_key: str, 数据集的名称
-    '''
     animal_dir = AnimalDir(animal, dataset_key)
     if animal_dir.animal_and_dataset_key == 'marmoset_majka':
         return cf.load_pkl(animal_dir.injection_id_to_area_map_dir + '/injection_id_to_area_map')
@@ -1307,16 +1106,6 @@ def load_injection_id_to_area_map(animal, dataset_key):
 
 
 def load_injection_site(animal, dataset_key, dim='2D'):
-    '''
-    读取注射点的坐标
-
-    animal: str, 动物名称
-    dataset_key: str, 数据集的名称
-    dim: 数据维度('2D', '3D')
-
-    注意:
-    一个area可能有多个注射点
-    '''
     animal_dir = AnimalDir(animal, dataset_key)
     if animal_dir.animal_and_dataset_key == 'marmoset_majka':
         if dim == '2D':
@@ -1328,9 +1117,6 @@ def load_injection_site(animal, dataset_key, dim='2D'):
 
 
 def get_molnar_performance(animal, dataset_key):
-    '''
-    获取Molnar paper的表现
-    '''
     macaque_markov29_dict = {
         'weak': {'MAE': 1.081, 'RMAE': 0.460},
         'weak_medium': {'MAE': 1.173, 'RMAE': 0.365},
@@ -1357,31 +1143,22 @@ def get_molnar_performance(animal, dataset_key):
         return macaque_markov29_dict
     if animal_and_dataset_key == 'mouse_gamanut':
         return mouse_gamanut_dict
-# endregion
 
 
-# region load model parameters & results
+
+
 def load_SC_model_dict(outcomedir):
-    SC_model_dict = cf.load_dict_separate(outcomedir+'/SC_model/SC_model_dict')
-    return SC_model_dict
-# endregion
+    return load_connectivity(outcomedir)
 
 
-# region axon_growth_model
+
+
 def whether_in_area(p, polygon):
-    '''
-    Judge whether the point p in the area occupied by poly.
-    '''
     point = shapely.geometry.Point(p[0], p[1])
     return polygon.intersects(point)
 
 
-def pointpats_random_poisson(hull, intensity=None, size=None, seed=None, rng=None):
-    '''
-    https://pysal.org/pointpats/_modules/pointpats/random.html#poisson
-
-    but with random seed enabled
-    '''
+def _get_poisson_points(hull, intensity=None, size=None, seed=None, rng=None):
     if rng is not None and seed is not None:
         raise ValueError("Cannot specify both rng and seed")
     if rng is None and seed is None:
@@ -1419,33 +1196,16 @@ def pointpats_random_poisson(hull, intensity=None, size=None, seed=None, rng=Non
     return result.squeeze()
 
 
-def generate_random_point_in_polygon(polygon, density, seed=None, rng=None):
-    '''
-    在多边形内生成随机点
-
-    polygon: shapely.geometry.Polygon, 多边形
-    density: int, 点的密度
-    '''
-    return pointpats_random_poisson(polygon, size=int(density*polygon.area), seed=seed, rng=rng)
+def get_random_points_in_polygon(polygon, density, seed):
+    return _get_poisson_points(polygon, size=int(density*polygon.area), seed=seed)
 
 
 def get_neuron_num(neuron_density, polygon_dict, total_num, animal, dataset_key):
-    '''
-    获取每个区域的神经元数目
-
-    neuron_density: dict, 每个区域的神经元密度
-    polygon_dict: dict, 每个区域的多边形
-    total_num: int, 总的神经元数目
-    animal: str, 动物名称
-    dataset_key: str, 数据集的名称
-    
-    return: dict, 每个区域的神经元数目(注意key是split的)
-    '''
     split_neuron_density = broadcast_value_to_split_area(neuron_density, animal, dataset_key)
     neuron_num = {}
     for area in split_neuron_density.keys():
         neuron_num[area] = split_neuron_density[area]*polygon_dict[area].area
-    # 保证神经元数目的总和等于total_num
+
     neuron_num_sum = sum(neuron_num.values())
     for area in neuron_num.keys():
         neuron_num[area] = int(neuron_num[area]/neuron_num_sum*total_num)
@@ -1453,9 +1213,6 @@ def get_neuron_num(neuron_density, polygon_dict, total_num, animal, dataset_key)
 
 
 def point_in_which_area(points, polygon_dict, whole_cortex_polygon):
-    '''
-    Get the area name for which the point belongs to.
-    '''
     indices = []
     for s in points:
         idx = 'out_of_areas'
@@ -1469,30 +1226,19 @@ def point_in_which_area(points, polygon_dict, whole_cortex_polygon):
 
 
 def get_direction_method_type(direction_method):
-    '''
-    获得方向的类型,方便简化模型选择时的代码
-    '''
     if direction_method in ['song', 'song_without_self', 'song_exclude_inside']:
         return 'force'
     if direction_method in ['random']:
         return 'random'
 
 
-def part_generate_axon_source_target(animal, dataset_key, direction_method, length_method, direction_params, length_params, na, point_density, part_index, process_num, model_type='send', max_iteration=10, the_seed=0):
-    '''
-    Generate the source and target of the axon growth model.
-
-    point_density: dict, 密度,注意key不是split的
-
-    注意:
-    生成的indices_ss和indices_tt是split的name
-    '''
+def get_connection_part_results(animal, dataset_key, direction_method, length_method, direction_params, length_params, na, point_density, part_index, process_num, the_seed, model_type='send', max_iteration=10):
     animal_info = AnimalInfo(animal, dataset_key)
     polygon_dict = animal_info.polygon_dict
     whole_cortex_polygon = animal_info.whole_cortex_polygon
     area_center_dict = animal_info.area_center_dict
 
-    # 自动广播
+
     split_direction_params = {}
     split_length_params = {}
     for k, v in direction_params.items():
@@ -1511,19 +1257,19 @@ def part_generate_axon_source_target(animal, dataset_key, direction_method, leng
     indices_ss=[]
     indices_tt=[]
 
-    seed = the_seed * process_num + part_index # 保证每个part的seed不同
+    seed = the_seed * process_num + part_index
     rng = cf.get_local_rng(seed=seed)
 
     neuron_num = get_neuron_num(neuron_density=point_density, polygon_dict=polygon_dict, total_num=int(na), animal=animal, dataset_key=dataset_key)
     direction_method_type = get_direction_method_type(direction_method)
 
     for area, polygon in polygon_dict.items():
-        multi_s = pointpats_random_poisson(polygon, size=neuron_num[area], rng=rng)
+        multi_s = np.atleast_2d(_get_poisson_points(polygon, size=neuron_num[area], rng=rng))
         for s in multi_s:
             index_s = [area]
-            index_t = ['out_of_areas'] # 默认值,确保进入循环
+            index_t = ['out_of_areas']
             try_num = 0
-            # to avoid endless iteration, if try_num is large, give up
+
             while 'out_of_areas' in index_t and try_num < max_iteration:
                 try_num = try_num + 1
                 if direction_method_type == 'force':
@@ -1532,7 +1278,7 @@ def part_generate_axon_source_target(animal, dataset_key, direction_method, leng
                         for force_area, force_center in area_center_dict.items():
                             forcei = (s - force_center) / (np.linalg.norm((s - force_center), ord=2) ** (split_direction_params['beta'][force_area] + 1))
                             forces.append(forcei)
-                    
+
                     if direction_method == 'song_without_self':
                         forces = []
                         for force_area, force_center in area_center_dict.items():
@@ -1547,12 +1293,12 @@ def part_generate_axon_source_target(animal, dataset_key, direction_method, leng
                                 forcei = (s - force_center) / (np.linalg.norm((s - force_center), ord=2) ** (split_direction_params['beta'][force_area] + 1))
                                 forces.append(forcei)
 
-                    # 处理send和receive
+
                     if model_type == 'send':
                         forces_sum = -np.sum(np.array(forces), axis=0)
                     else:
                         forces_sum = np.sum(np.array(forces), axis=0)
-                    direction_growth = forces_sum / np.linalg.norm(forces_sum, ord=2) # direction of the axon
+                    direction_growth = forces_sum / np.linalg.norm(forces_sum, ord=2)
                 else:
                     if direction_method == 'random':
                         angle = rng.rand(1) * 2 * np.pi
@@ -1560,12 +1306,12 @@ def part_generate_axon_source_target(animal, dataset_key, direction_method, leng
                         direction_growth = direction_growth.reshape((2,))
 
                 if length_method == 'exponential':
-                    length = rng.exponential(scale=split_length_params['Lambda'][area]) # length of the axon
+                    length = rng.exponential(scale=split_length_params['Lambda'][area])
                 if length_method == 'power_law':
                     length = rng.pareto(split_length_params['Lambda'][area])
-                t = s + length * direction_growth # terminal position of the axon
-                
-                # check whether t is in the whole cortex
+                t = s + length * direction_growth
+
+
                 index_t = point_in_which_area([t], polygon_dict, whole_cortex_polygon)
 
             if 'out_of_areas' not in index_t:
@@ -1576,14 +1322,14 @@ def part_generate_axon_source_target(animal, dataset_key, direction_method, leng
 
 
     if model_type=='receive':
-        # just change ss and tt
+
         bb = ss
         ss = tt
         tt = bb
         indices_bb = indices_ss
         indices_ss = indices_tt
         indices_tt = indices_bb
-    
+
     ss = np.array(ss)
     tt = np.array(tt)
     indices_ss = np.array(indices_ss).flatten()
@@ -1593,100 +1339,86 @@ def part_generate_axon_source_target(animal, dataset_key, direction_method, leng
 
 
 def get_SC_model_dict_from_CCMe_model(CCMe_model, animal, dataset_key, outcomes_dir):
-    # 生成对称的CCM
+
     CCMe_sym_model = pd.DataFrame((CCMe_model.values+CCMe_model.values.T)/2, index=CCMe_model.index, columns=CCMe_model.columns)
 
-    # 整合
+
     SC_model_dict = {'CCMe': CCMe_model, 'CCMe_sym': CCMe_sym_model}
 
-    # 生成normalized SC和log SC
+
     new_entries = {}
     for k, v in SC_model_dict.items():
         normalized = normalize_SC(v, animal, dataset_key)
         new_entries[f"{k}_normalized"] = normalized
         new_entries[f"{k}_normalized_log"] = log_SC(normalized, animal, dataset_key)
 
-    # 合并到原字典
+
     SC_model_dict.update(new_entries)
 
-    # 生成FLN
+
     SC_model_dict['FLNe'] = CCM_to_FLN(CCMe_model)
-    
-    # 保存
-    cf.save_dict_separate(SC_model_dict, outcomes_dir+'/SC_model/SC_model_dict')
+
+
+    save_connectivity(SC_model_dict, outcomes_dir)
     return SC_model_dict
 
 
 def get_SC_model_dict_from_CCMt_model(CCMt_model, animal, dataset_key, outcomes_dir):
-    # 去掉对角线
+
     CCMe_model = cf.replace_df_diagonal(CCMt_model, replace_value=np.nan)
-    
-    # 生成对称的CCM
+
+
     CCMe_sym_model = pd.DataFrame((CCMe_model.values+CCMe_model.values.T)/2, index=CCMe_model.index, columns=CCMe_model.columns)
 
-    # 整合
+
     SC_model_dict = {'CCMe': CCMe_model, 'CCMe_sym': CCMe_sym_model, 'CCMt': CCMt_model}
 
-    # 生成normalized SC和log SC
+
     new_entries = {}
     for k, v in SC_model_dict.items():
         normalized = normalize_SC(v, animal, dataset_key)
         new_entries[f"{k}_normalized"] = normalized
         new_entries[f"{k}_normalized_log"] = log_SC(normalized, animal, dataset_key)
 
-    # 合并到原字典
+
     SC_model_dict.update(new_entries)
 
-    # 生成FLN
+
     SC_model_dict['FLNe'] = CCM_to_FLN(CCMe_model)
     SC_model_dict['FLNt'] = CCM_to_FLN(CCMt_model)
-    
-    # 保存
-    cf.save_dict_separate(SC_model_dict, outcomes_dir+'/SC_model/SC_model_dict')
+
+
+    save_connectivity(SC_model_dict, outcomes_dir)
     return SC_model_dict
 
 
-def generate_SC_from_axon_source_target(animal, dataset_key, outcomes_dir=None, timedir=None, indices_ss=None, indices_tt=None):
-    '''
-    Get the model SC and Data SC.
-
-    note:
-        CCMe: connection count matrix
-        CCMsym: symmetry connection count matrix
-        CCMt: connection count matrix with self connection
-        split_CCM: connection count matrix with split area name
-        FLNe: fraction of labeled neuron
-        FLNt: FLN with self connection
-    '''
+def get_connectivity_from_connection_samples(animal, dataset_key, outcomes_dir=None, timedir=None, indices_ss=None, indices_tt=None):
     if indices_ss is None or indices_tt is None:
-        axon_growth_model = AxonGrowthModel()
-        axon_growth_model.set_timedir(timedir)
-        indices_ss = axon_growth_model.get_simulation_value('indices_ss')
-        indices_tt = axon_growth_model.get_simulation_value('indices_tt')
-    
+        connection_model = ConnectionGenerationModel()
+        connection_model.set_timedir(timedir)
+        indices_ss = connection_model.get_simulation_value('indices_ss')
+        indices_tt = connection_model.get_simulation_value('indices_tt')
+
     animal_info = AnimalInfo(animal, dataset_key)
     full_name = animal_info.full_name
     full_split_name = animal_info.full_split_name
 
-    # 将脑区名转换为序号
+
     idx_ss = area_name_to_index_array(indices_ss, full_split_name)
     idx_tt = area_name_to_index_array(indices_tt, full_split_name)
 
-    # 生成connection_array
+
     split_CCMt_array = connection_pair_to_connection_matrix(idx_ss, idx_tt, area_num=len(full_split_name))
 
-    # 转换为pd
+
     split_CCMt_model = pd.DataFrame(split_CCMt_array, columns=full_split_name, index=full_split_name)
 
-    # 转换为normal
+
     CCMt_model = convert_split_df_to_normal(split_CCMt_model, animal, dataset_key, method='sum')
     return get_SC_model_dict_from_CCMt_model(CCMt_model, animal, dataset_key, outcomes_dir)
 
 
 def SC_type_to_SC_dict_key(SC_type):
-    '''
-    将数据的SC_type转换为SC_dict的key
-    '''
     SC_dict_key = SC_type
     if SC_type == 'Dmri':
         SC_dict_key = 'CCMe_sym_normalized'
@@ -1696,9 +1428,6 @@ def SC_type_to_SC_dict_key(SC_type):
 
 
 def SC_type_to_SC_dict_key_include_diagonal(SC_type):
-    '''
-    将数据的SC_type转换为SC_dict的key,包括对角线
-    '''
     SC_dict_key = SC_type
     if SC_type == 'Dmri':
         SC_dict_key = 'CCMt_sym_normalized'
@@ -1707,21 +1436,18 @@ def SC_type_to_SC_dict_key_include_diagonal(SC_type):
     return SC_dict_key
 
 
-class AxonGrowthModel(cf.MetaModel):
+class ConnectionGenerationModel(ConnectionModel):
+    model_name = 'connection_generation'
+
     def __init__(self):
         super().__init__()
-        self.set_value_dir_both_dir_key(['animal_and_dataset_key'])
         self.set_default_params()
 
     def set_default_params(self):
-        '''
-        设置默认参数,有可能会被覆盖
-        '''
         self.process_num = 1
         self.model_type = 'send'
         self.use_neuron_density_to_generate = False
         self.max_iteration = 10
-        self.the_seed = 0
 
     @property
     def point_density(self):
@@ -1735,9 +1461,6 @@ class AxonGrowthModel(cf.MetaModel):
         self.animal_info = AnimalInfo(self.animal, self.dataset_key)
 
     def get_unique_Lambda(self):
-        '''
-        获取长度的参数
-        '''
         Lambda = self.length_params['Lambda']
         if isinstance(Lambda, dict):
             if len(set(Lambda.values())) == 1:
@@ -1750,37 +1473,29 @@ class AxonGrowthModel(cf.MetaModel):
     def run_detail(self):
         generation_kwargs = {'animal': self.animal, 'dataset_key': self.dataset_key, 'direction_method': self.direction_method, 'length_method': self.length_method, 'direction_params': self.direction_params, 'length_params': self.length_params, 'na': int(self.na/self.process_num), 'point_density': self.point_density, 'process_num': self.process_num, 'model_type': self.model_type, 'max_iteration': self.max_iteration, 'the_seed': self.the_seed}
         generate_for_list = list(range(self.process_num))
-        axon_list = cf.multi_process_list_for(process_num=self.process_num, func=part_generate_axon_source_target, kwargs=generation_kwargs, for_list=generate_for_list, for_idx_name='part_index')
-        # 合并结果
-        self.simulation_results = defaultdict(list)
-        for r in axon_list:
-            for k, v in r.items():
-                self.simulation_results[k].extend(v)
-        # 将所有结果变成array
-        self.simulation_results = {k: np.array(v) for k, v in self.simulation_results.items()}
+        worker_count = getattr(self, 'worker_count', self.process_num)
+        connection_part_results = cf.multi_process_list_for(process_num=worker_count, func=get_connection_part_results, kwargs=generation_kwargs, for_list=generate_for_list, for_idx_name='part_index')
+        self.simulation_results = {
+            key: np.concatenate([result[key] for result in connection_part_results], axis=0)
+            for key in ['ss', 'tt', 'indices_ss', 'indices_tt']
+        }
 
     @property
     def SC_model_dict(self):
-        '''
-        获取SC_model_dict
-        '''
         try:
             return load_SC_model_dict(self.outcomes_dir)
-        except:
+        except FileNotFoundError:
             indices_ss = self.get_simulation_value('indices_ss')
             indices_tt = self.get_simulation_value('indices_tt')
-            return generate_SC_from_axon_source_target(self.animal, self.dataset_key, outcomes_dir=self.outcomes_dir, timedir=self.timedir, indices_ss=indices_ss, indices_tt=indices_tt)
+            return get_connectivity_from_connection_samples(self.animal, self.dataset_key, outcomes_dir=self.outcomes_dir, timedir=self.timedir, indices_ss=indices_ss, indices_tt=indices_tt)
 
     def get_suitable_SC_model(self):
-        '''
-        获取和数据匹配的SC_model
-        '''
         SC_dict_key = SC_type_to_SC_dict_key(self.animal_info.SC_type)
         return self.SC_model_dict[SC_dict_key]
 
     def get_masked_SC_as_data(self, SC_dict_key):
         masked_SC = self.SC_model_dict[SC_dict_key].copy()
-        # 将source_name和target_name以外的所有值变为nan
+
         for r in masked_SC.index:
             for c in masked_SC.columns:
                 if r not in self.animal_info.source_name or c not in self.animal_info.target_name:
@@ -1799,9 +1514,6 @@ class AxonGrowthModel(cf.MetaModel):
             return data_model_correlation(SC_model, SC_data, self.animal, self.dataset_key, diagonal=diagonal)
 
     def get_area_level_correlation(self, diagonal=False):
-        '''
-        获取区域级别的相关性
-        '''
         if diagonal:
             raise NotImplementedError
         else:
@@ -1810,15 +1522,27 @@ class AxonGrowthModel(cf.MetaModel):
             return area_level_correlation(SC_model, SC_data, self.animal, self.dataset_key, diagonal=diagonal)
 
     def get_relative_error(self, diagonal=False):
-        '''
-        获取相对误差
-        '''
         if diagonal:
             raise NotImplementedError
         else:
             SC_model = self.get_suitable_SC_model_masked_as_data()
             SC_data = self.animal_info.SC_data
             return data_model_relative_error(SC_model, SC_data, self.animal, self.dataset_key, diagonal=diagonal)
+
+
+def get_connection_generation_results(config, output_dir, worker_count=None, force_run=False):
+    params = dict(config)
+    if worker_count is not None:
+        params['worker_count'] = worker_count
+    model = ConnectionGenerationModel()
+    model.set_up(params=params, basedir=output_dir, force_run=force_run)
+    model.run()
+    model.SC_model_dict
+    save_json(
+        {'correlation': float(model.get_data_model_correlation())},
+        Path(model.run_dir) / 'metrics.json',
+    )
+    return model
 
 
 def area_EDR_3d_connection_generation(animal, dataset_key, Lambda):
@@ -1835,7 +1559,9 @@ def area_EDR_3d_connection_generation(animal, dataset_key, Lambda):
     return CCMt
 
 
-class AreaEDR3DModel(AxonGrowthModel):
+class AreaEDR3DModel(ConnectionGenerationModel):
+    model_name = 'area_edr_3d'
+
     def set_default_params(self):
         pass
 
@@ -1852,57 +1578,56 @@ class AreaEDR3DModel(AxonGrowthModel):
 
     @property
     def SC_model_dict(self):
-        '''
-        获取SC_model_dict
-        '''
         try:
             return load_SC_model_dict(self.outcomes_dir)
-        except:
+        except FileNotFoundError:
             return get_SC_model_dict_from_CCMt_model(self.get_simulation_value('CCMt_model'), self.animal, self.dataset_key, self.outcomes_dir)
 
 
-class VoxelEDR3DModel(AxonGrowthModel):
+class VoxelEDR3DModel(ConnectionGenerationModel):
+    model_name = 'voxel_edr_3d'
+
     pass
 
 
 def calculate_weighted_matching_index(weighted_adj, epsilon=1e-10):
     if not np.allclose(weighted_adj, weighted_adj.T):
-        raise ValueError("邻接矩阵应该是对称的")
-    
+        raise ValueError("")
+
     n = weighted_adj.shape[0]
     matching_matrix = np.zeros((n, n))
-    
-    # 预处理:创建排除对角线的掩码
+
+
     mask = np.ones(n, dtype=bool)
-    
-    # 预计算邻居存在矩阵
+
+
     exists = (weighted_adj > 0)
-    
+
     for i in range(n):
         w_i = weighted_adj[i]
         e_i = exists[i]
-        
+
         for j in range(i+1, n):
             w_j = weighted_adj[j]
             e_j = exists[j]
-            
-            # 创建排除i,j的掩码
+
+
             mask[:] = True
             mask[[i, j]] = False
-            
-            # 计算两种掩码
+
+
             common = e_i & e_j & mask
             any_neighbor = (e_i | e_j) & mask
-            
-            # 直接使用向量化求和
+
+
             num = (w_i[common] + w_j[common]).sum()
             den = (w_i[any_neighbor] + w_j[any_neighbor]).sum()
-            
+
             if den > epsilon:
                 val = num / den
                 matching_matrix[i, j] = val
                 matching_matrix[j, i] = val
-    
+
     return matching_matrix
 
 
@@ -1912,57 +1637,49 @@ def calculate_binary_matching_index(adj, epsilon=1e-10):
 
 
 def initialize_adjacency_matrix(SC_data, init_connection_num):
-    """
-    初始化二进制邻接矩阵,使用SC_data中最强的连接
-    返回带有区域标签的DataFrame
-    """
     area_num = len(SC_data)
-    # 创建带有正确索引的DataFrame
+
     binary_adj_pd = pd.DataFrame(
         np.zeros((area_num, area_num), dtype=float),
         index=SC_data.index,
         columns=SC_data.columns
     )
-    
-    # 获取SC值（不包括对角线）
+
+
     SC_values = SC_data.copy()
     np.fill_diagonal(SC_values.values, 0)
-    
-    # 获取最强的init_connection_num个连接的索引
+
+
     flat_indices = np.argsort(SC_values.values, axis=None)[::-1][:int(init_connection_num/2)]
-    
+
     for idx in flat_indices:
         i, j = np.unravel_index(idx, SC_values.shape)
-        # 使用.loc确保使用标签索引
+
         binary_adj_pd.iloc[i, j] = 1
-        binary_adj_pd.iloc[j, i] = 1  # 确保对称
+        binary_adj_pd.iloc[j, i] = 1
     return binary_adj_pd
 
 
 def calculate_probability_matrix(binary_adj_pd, distance_3D, Lambda, gamma, shift=1e-6, set_existing_to_zero=True):
-    """
-    计算添加新连接的概率矩阵
-    返回带有区域标签的DataFrame
-    """
-    # 距离成分 - 使用.values进行计算
+
     distance_component = np.exp(-distance_3D.values / Lambda)
-    
-    # 匹配指数成分 - 使用.values进行计算
+
+
     matching_index_component = calculate_binary_matching_index(binary_adj_pd.values)
-    
-    # 组合概率矩阵
+
+
     prob_matrix = distance_component * ((matching_index_component + shift) ** gamma)
 
     if set_existing_to_zero:
-        # 将已有连接的权重设为0
+
         prob_matrix[binary_adj_pd.values > 0] = 0
 
-    # 归一化
+
     total_weight = prob_matrix.sum()
     if total_weight > 0:
         prob_matrix /= total_weight
-    
-    # 转换为DataFrame并保留标签
+
+
     return pd.DataFrame(
         prob_matrix,
         index=binary_adj_pd.index,
@@ -1971,24 +1688,20 @@ def calculate_probability_matrix(binary_adj_pd, distance_3D, Lambda, gamma, shif
 
 
 def add_new_connection(binary_adj_pd, prob_matrix, rng):
-    """
-    根据概率矩阵添加新连接
-    直接修改binary_adj DataFrame
-    """
     area_num = binary_adj_pd.shape[0]
     flat_probs = prob_matrix.values.flatten()
-    
-    # 确保概率和为1（考虑浮点误差）
+
+
     flat_probs /= flat_probs.sum()
-    
+
     chosen_idx = rng.choice(flat_probs.size, p=flat_probs)
     row_idx, col_idx = np.unravel_index(chosen_idx, prob_matrix.shape)
-    
-    # 获取实际的行列标签
+
+
     row_label = binary_adj_pd.index[row_idx]
     col_label = binary_adj_pd.columns[col_idx]
-    
-    # 添加对称连接
+
+
     binary_adj_pd.loc[row_label, col_label] = 1
     binary_adj_pd.loc[col_label, row_label] = 1
     return binary_adj_pd
@@ -1997,41 +1710,41 @@ def add_new_connection(binary_adj_pd, prob_matrix, rng):
 def betzel_like_connection_generation(animal, dataset_key, Lambda, gamma, init_connection_num, seed, final_connection_density=None):
     rng = cf.get_local_rng(seed=seed)
     animal_info = AnimalInfo(animal, dataset_key)
-    
-    # 获取基础数据
+
+
     distance_3D = animal_info.distance_3D
     SC_data = animal_info.SC_data
-    
-    # 确认两者的索引和列标签一致(顺序也一致)
+
+
     assert distance_3D.index.equals(SC_data.index) and distance_3D.columns.equals(SC_data.columns), "Distance matrix and SC data must have the same index and columns."
-    
-    # 计算目标连接数
+
+
     if final_connection_density is None:
         final_connection_density = get_connection_density(SC_data, animal, dataset_key)
     area_num = len(animal_info.full_name)
     final_connection_num = int(area_num * (area_num - 1) / 2 * final_connection_density)
 
-    # 初始化邻接矩阵
+
     binary_adj_pd = initialize_adjacency_matrix(SC_data, init_connection_num)
-    
-    # 迭代添加连接
+
+
     for _ in tqdm(range(final_connection_num - init_connection_num)):
         prob_matrix = calculate_probability_matrix(
             binary_adj_pd, distance_3D, Lambda, gamma
         )
         binary_adj_pd = add_new_connection(binary_adj_pd, prob_matrix, rng)
-    
+
     return binary_adj_pd
 
 
 def chen_like_weighted_assignment(animal, dataset_key, Lambda, gamma, binary_adj_pd, shift=1e-6):
     animal_info = AnimalInfo(animal, dataset_key)
-    
-    # 获取基础数据
+
+
     distance_3D = animal_info.distance_3D
     SC_data = animal_info.SC_data
-    
-    # 确认两者的索引和列标签一致(顺序也一致)
+
+
     assert distance_3D.index.equals(SC_data.index) and distance_3D.columns.equals(SC_data.columns), "Distance matrix and SC data must have the same index and columns."
 
     prob_matrix = calculate_probability_matrix(binary_adj_pd, distance_3D, Lambda, gamma, set_existing_to_zero=False, shift=shift)
@@ -2043,12 +1756,12 @@ def chen_like_weighted_assignment(animal, dataset_key, Lambda, gamma, binary_adj
 
 def adapted_chen_like_weighted_assignment(animal, dataset_key, Lambda, gamma, binary_adj_pd, true_binary_adj_pd, shift=1e-6):
     animal_info = AnimalInfo(animal, dataset_key)
-    
-    # 获取基础数据
+
+
     distance_3D = animal_info.distance_3D
     SC_data = animal_info.SC_data
-    
-    # 确认两者的索引和列标签一致(顺序也一致)
+
+
     assert distance_3D.index.equals(SC_data.index) and distance_3D.columns.equals(SC_data.columns), "Distance matrix and SC data must have the same index and columns."
 
     prob_matrix = calculate_probability_matrix(binary_adj_pd, distance_3D, Lambda, gamma, set_existing_to_zero=False, shift=shift)
@@ -2065,7 +1778,9 @@ def modify_weighted_adj_by_matching_index(weighted_adj_pd, epsilon=1e-10):
     return modified_weighted_adj_pd
 
 
-class BetzelLikeModel(AxonGrowthModel):
+class BetzelLikeModel(ConnectionGenerationModel):
+    model_name = 'betzel_like'
+
     def set_default_params(self):
         pass
 
@@ -2089,21 +1804,16 @@ class BetzelLikeModel(AxonGrowthModel):
             'CCMe_model': weighted_adj_pd,
         }
 
-        self.check_fig(binary_adj_pd, weighted_adj_pd)
-
     @property
     def SC_model_dict(self):
-        '''
-        获取SC_model_dict
-        '''
         try:
             return load_SC_model_dict(self.outcomes_dir)
-        except:
+        except FileNotFoundError:
             return get_SC_model_dict_from_CCMe_model(self.get_simulation_value('CCMe_model'), self.animal, self.dataset_key, self.outcomes_dir)
 
     def check_fig(self, binary_adj_pd, weighted_adj_pd):
         fig, axes = cf.gfa(ncols=2)
-        
+
         ax = axes[0]
         cf.sns_heatmap(ax, binary_adj_pd)
         cf.set_ax(ax, title='Binary Connection Matrix')
@@ -2116,6 +1826,8 @@ class BetzelLikeModel(AxonGrowthModel):
 
 
 class AdaptedBetzelLikeModel(BetzelLikeModel):
+    model_name = 'adapted_betzel_like'
+
     def run_detail(self):
         animal_info = AnimalInfo(self.animal, self.dataset_key)
         binary_adj_pd = (animal_info.SC_data.copy() > 0).astype(int)
@@ -2137,51 +1849,33 @@ class AdaptedBetzelLikeModel(BetzelLikeModel):
             'CCMe_model': weighted_adj_pd,
         }
 
-        self.check_fig(binary_adj_pd, weighted_adj_pd)
-# endregion
 
 
-# region process
+
+
 def connection_pair_to_connection_matrix(source_idx, target_idx, area_num=None):
-    '''
-    将连接对转换为连接矩阵的Numpy实现
-    
-    参数：
-    source_idx -- 源节点索引列表(一维数组,内部为整数)
-    target_idx -- 目标节点索引列表(一维数组,内部为整数)
-    area_num -- 可选参数，脑区数量(默认为最大索引值+1)
-    
-    返回：
-    连接数矩阵(二维numpy数组)
-    '''
-    # 自动计算节点总数
+
     if area_num is None:
         area_num = max(np.max(source_idx), np.max(target_idx)) + 1
-    
-    # 初始化矩阵
+
+
     matrix = np.zeros((area_num, area_num), dtype=np.int32)
-    
-    # 使用np.add.at进行向量化计数
+
+
     np.add.at(matrix, (source_idx, target_idx), 1)
-    
+
     return matrix
 
 
 def area_name_to_index_array(area_name_list, ordered_area_name):
-    '''
-    将脑区名字列表转换为索引数组
-    '''
-    # 创建脑区名到索引的映射字典
+
     area_to_index = {area: idx for idx, area in enumerate(ordered_area_name)}
-    # 将原始数组中的每个脑区名转换为对应的索引
+
     index_array = [area_to_index[area] for area in area_name_list]
     return index_array
 
 
 def convert_split_df_to_normal(split_df, animal, dataset_key, method='sum'):
-    '''
-    将以分裂的脑区作为column和row的df转换为正常的
-    '''
     animal_info = AnimalInfo(animal, dataset_key)
     full_name = animal_info.full_name
     full_split_name = animal_info.full_split_name
@@ -2214,9 +1908,6 @@ def convert_split_df_to_normal(split_df, animal, dataset_key, method='sum'):
 
 
 def broadcast_value_to_split_area(value_dict, animal, dataset_key):
-    '''
-    将value_dict中的值广播到每个split_area(比如某个区域有a--1,a--2,则将value_dict['a']广播到a--1和a--2,获得和原先一样的数值)
-    '''
     animal_info = AnimalInfo(animal, dataset_key)
     split_value_dict = {}
     for area in animal_info.full_name:
@@ -2227,10 +1918,6 @@ def broadcast_value_to_split_area(value_dict, animal, dataset_key):
 
 
 def assign_value_to_split_area(split_value_dict, key, value, animal, dataset_key):
-    '''
-    对split_value_dict中的某个key重新赋值,这个key或许不存在于split_value_dict中,因为在里面的可能是分开的多个
-    这种赋值模式保证覆盖到所有split_area
-    '''
     animal_info = AnimalInfo(animal, dataset_key)
     for split_area in animal_info.name_to_split_name_dict[key]:
         split_value_dict[split_area] = value
@@ -2238,19 +1925,13 @@ def assign_value_to_split_area(split_value_dict, key, value, animal, dataset_key
 
 
 def CCM_to_FLN(CCM):
-    '''
-    将CCM转换为FLN(FLN是指以target正则化所有输入连接的矩阵)
-    '''
     FLN = cf.normalize_df_with_sum(CCM, row_or_col='col')
     return FLN
 
 
 def normalize_SC(SC, animal, dataset_key):
-    '''
-    将SC正则化
-    '''
     animal_info = AnimalInfo(animal, dataset_key)
-    
+
     sub_SC = cf.get_sub_df(df=SC, row_list=animal_info.source_name, col_list=animal_info.target_name)
     SC_sum = sub_SC.sum().sum()
     if animal_info.SC_focus_direction == 'col':
@@ -2262,11 +1943,6 @@ def normalize_SC(SC, animal, dataset_key):
 
 
 def scale_SC_to_int(SC, minimal_tol=None):
-    '''
-    将SC数据缩放到整数
-
-    由于SC可能有极小的值,按照此值来scale可能会得到过大的int,但是这些值对于后续分布的影响极小,在快速计算的情况下,可以设定minimal_tol
-    '''
     SC_without_nan = cf.process_nan(SC, nan_policy='fill', fill_value=0.)
     minimal_value = np.nanmin(SC_without_nan[SC_without_nan > 0].values)
     if minimal_tol is not None:
@@ -2277,35 +1953,25 @@ def scale_SC_to_int(SC, minimal_tol=None):
 
 
 def weight_matrix_to_topo_matrix(weight_matrix):
-    '''
-    将权重矩阵转化为拓扑矩阵
-    '''
     if isinstance(weight_matrix, pd.DataFrame):
-        # 如果输入是DataFrame，将其转换为NumPy数组进行处理
+
         topo_matrix = (weight_matrix.values > 0).astype(int)
         return pd.DataFrame(topo_matrix, index=weight_matrix.index, columns=weight_matrix.columns)
-    
+
     elif isinstance(weight_matrix, np.ndarray):
-        # 如果输入是NumPy数组，直接处理
+
         return (weight_matrix > 0).astype(int)
-    
+
     else:
-        raise ValueError("输入必须是 pandas.DataFrame 或 numpy.ndarray 类型")
+        raise ValueError(" pandas.DataFrame  numpy.ndarray ")
 
 
 def prioritize_sublist(l, sub_l):
-    '''
-    将sub_l中的元素放在l的前面,其余按顺序排列
-    '''
     back = [item for item in l if item not in sub_l]
     return sub_l + back
 
 
 def rearrange_SC(SC, animal, dataset_key):
-    '''
-    重排列SC
-    rearrange: 是否重新排列SC的顺序,使得被注射的target区域排在前面,其余按顺序排列
-    '''
     animal_info = AnimalInfo(animal, dataset_key)
     reordered_full_name = animal_info.reordered_full_name
     new_SC = cf.reorder_df(SC, reordered_full_name, reordered_full_name)
@@ -2313,30 +1979,24 @@ def rearrange_SC(SC, animal, dataset_key):
 
 
 def log_SC(SC, animal, dataset_key, base=10, apply_c=False, apply_w=False):
-    '''
-    对SC取log
-    '''
     animal_info = AnimalInfo(animal, dataset_key)
     c = animal_info.c
     w = animal_info.w
 
     SC_log = np.log(SC) / np.log(base)
-    # 处理nan,inf,-inf
+
     SC_log = SC_log.replace([np.inf, -np.inf], np.nan)
     if apply_c:
         SC_log = SC_log + c
     if apply_w:
-        # 将-inf替换为w
+
         SC_log = SC_log.replace(np.nan, w)
-        # 将小于w的值设为w
+
         SC_log[SC_log < w] = w
     return SC_log
 
 
 def coarse_grain_to_combined(value_dict, animal, dataset_key):
-    '''
-    将value_dict中的值合并到combined的脑区中,并求平均值
-    '''
     animal_info = AnimalInfo(animal, dataset_key)
 
     if animal_info.animal_and_dataset_key not in ['macaque_markov29', 'macaque_markov40', 'marmoset_majka']:
@@ -2354,15 +2014,10 @@ def coarse_grain_to_combined(value_dict, animal, dataset_key):
 
 
 def get_weight_category_mask(animal, dataset_key, diagonal=False):
-    '''
-    根据SC的强度,将边分为多类
-
-    注意: mask的shape是source_name和target_name的shape
-    '''
     animal_info = AnimalInfo(animal, dataset_key)
     w = animal_info.w
     SC_data = animal_info.SC_data
-    SC_data = cf.get_sub_df(df=SC_data, row_list=animal_info.source_name, col_list=animal_info.target_name) # 只取source和target的部分
+    SC_data = cf.get_sub_df(df=SC_data, row_list=animal_info.source_name, col_list=animal_info.target_name)
     SC_data_logged = log_SC(SC_data, animal, dataset_key, apply_c=True, apply_w=True)
 
     category_mask_dict = {}
@@ -2372,38 +2027,30 @@ def get_weight_category_mask(animal, dataset_key, diagonal=False):
     category_mask_dict['strong'] = SC_data_logged > 5
     category_mask_dict['all'] = SC_data_logged > w
     category_mask_dict['non'] = SC_data_logged <= w
-    category_mask_dict['both'] = (SC_data_logged > w) | (SC_data_logged <= w) # both all and non
+    category_mask_dict['both'] = (SC_data_logged > w) | (SC_data_logged <= w)
 
     if diagonal:
         pass
     else:
-        # 将所有mask的对角线部分设为False
+
         for key in category_mask_dict.keys():
             category_mask_dict[key] = cf.replace_df_diagonal(category_mask_dict[key], replace_value=False)
     return category_mask_dict
 
 
 def get_intrinsic_proportion_from_SCt(SCt, animal, dataset_key):
-    '''
-    从SCt中获取intrinsic的比例
-    '''
     animal_info = AnimalInfo(animal, dataset_key)
-    intrinsic_proportion = {}
+    plot_intrinsic_proportion = {}
     if animal_info.animal_and_dataset_key == 'marmoset_majka':
         col_sum = cf.col_sum_df(SCt)
         for area in animal_info.full_name:
-            intrinsic_proportion[area] = SCt.loc[area, area] / col_sum[area]
+            plot_intrinsic_proportion[area] = SCt.loc[area, area] / col_sum[area]
     else:
         raise NotImplementedError
-    return intrinsic_proportion
+    return plot_intrinsic_proportion
 
 
 def get_area_level_property_repeated_by_SC(SC, property_df, animal, dataset_key, minimal_tol=None):
-    '''
-    通过SC对property进行缩放
-
-    但是return的是脑区级别的
-    '''
     SC_int = scale_SC_to_int(SC, minimal_tol=minimal_tol)
     animal_info = AnimalInfo(animal, dataset_key)
     property_dict = {}
@@ -2419,14 +2066,11 @@ def get_area_level_property_repeated_by_SC(SC, property_df, animal, dataset_key,
             sub_SC_int = cf.get_sub_df(df=SC_int, row_list=[row])
             property_dict[row] = cf.repeat_data(sub_property_df, sub_SC_int)
     return property_dict
-# endregion
 
 
-# region analyze
+
+
 def get_connection_density(SC, animal, dataset_key, diagonal=False):
-    '''
-    计算连接密度
-    '''
     animal_info = AnimalInfo(animal, dataset_key)
     target_name = animal_info.target_name
     source_name = animal_info.source_name
@@ -2435,7 +2079,7 @@ def get_connection_density(SC, animal, dataset_key, diagonal=False):
         total_connection_num = sub_SC.size
         existing_connection_num = np.sum(sub_SC.values > 0)
     else:
-        total_connection_num = sub_SC.size - np.min([len(source_name), len(target_name)])  # 去掉对角线
+        total_connection_num = sub_SC.size - np.min([len(source_name), len(target_name)])
         existing_connection_num = np.sum(sub_SC.values > 0) - np.sum(np.diag(sub_SC.values) > 0)
     connection_density = existing_connection_num / total_connection_num
     return connection_density
@@ -2452,12 +2096,6 @@ def data_model_correlation(SC_data, SC_model, animal, dataset_key, diagonal=Fals
 
 
 def data_model_relative_error(SC_data, SC_model, animal, dataset_key, diagonal=False):
-    '''
-    计算数据和模型之间的相对误差
-    
-    注意:
-    输出的维度是source_name和target_name的shape
-    '''
     animal_info = AnimalInfo(animal, dataset_key)
     target_name = animal_info.target_name
     source_name = animal_info.source_name
@@ -2476,20 +2114,12 @@ def data_model_relative_error(SC_data, SC_model, animal, dataset_key, diagonal=F
 
 
 def data_model_RMAE_masked(SC_data, SC_model, animal, dataset_key, mask, diagonal=False):
-    '''
-    RMAE: Relative Mean Absolute Error
-
-    mask: 一个df,需要计入的部分为1,不计入的部分为0
-    '''
     relative_error = data_model_relative_error(SC_data, SC_model, animal, dataset_key, diagonal=diagonal)
     RMAE = np.nansum(relative_error.values * mask.values) / np.nansum(mask.values)
     return RMAE
 
 
 def get_performance_dict(SC_data, SC_model, animal, dataset_key, diagonal=False):
-    '''
-    获取performance_dict
-    '''
     performance_dict = {}
     performance_dict['correlation'] = data_model_correlation(SC_data=SC_data, SC_model=SC_model, animal=animal, dataset_key=dataset_key, diagonal=diagonal)
     mask_dict = get_weight_category_mask(animal=animal, dataset_key=dataset_key, diagonal=diagonal)
@@ -2499,9 +2129,6 @@ def get_performance_dict(SC_data, SC_model, animal, dataset_key, diagonal=False)
 
 
 def SC_proportion_in_weight_category(animal, dataset_key):
-    '''
-    计算SC在不同权重类别中的比例
-    '''
     weight_category_dict = get_weight_category_mask(animal, dataset_key)
     SC_proportion_dict = {}
     for key, mask in weight_category_dict.items():
@@ -2544,21 +2171,16 @@ def get_rm_longrange_correlation_change(SC_data, SC_model, distance_matrix, anim
             SC_model_to_use = SC_model_threshold
         else:
             SC_model_to_use = SC_model
-        # 计算相关性
+
         corr = data_model_correlation(SC_data_to_use, SC_model_to_use, animal, dataset_key, diagonal=False)
         corr_list.append(corr)
     return corr_list
 
 
 def angle_ks_with_uniform(angle_list):
-    '''
-    用于计算方向分布和均匀分布的KS距离
-
-    由于角度是有周期性的,因此需要对角度进行旋转,找到最小的KS距离
-    '''
     def map_to_pi_range(angle):
         return np.mod(angle + np.pi, 2 * np.pi) - np.pi
-    
+
     ks_distance_list = []
     for rotation in np.linspace(0, 2*np.pi, 20):
         new_angle_list = map_to_pi_range(np.array(angle_list) + rotation)
@@ -2569,51 +2191,45 @@ def angle_ks_with_uniform(angle_list):
 
 
 def get_angle_distribution_from_SC_dispersion(animal, dataset_key, SC, scale_value):
-    '''
-    利用随机生成在polygon内的点来计算每个area的angle_distribution
-    '''
     animal_info = AnimalInfo(animal, dataset_key)
     target_name = animal_info.target_name
     source_name = animal_info.source_name
     name_to_split_name_dict = animal_info.name_to_split_name_dict
-    pgon = animal_info.polygon_dict
-    
+    polygon_dict = animal_info.polygon_dict
+    area_size = {
+        area: sum(polygon_dict[split_area].area for split_area in split_areas)
+        for area, split_areas in name_to_split_name_dict.items()
+    }
+    point_cache = {}
+
+    def get_cached_point(split_area, seed):
+        key = (split_area, seed)
+        if key not in point_cache:
+            point_cache[key] = _get_poisson_points(polygon_dict[split_area], size=1, seed=seed)
+        return point_cache[key]
+
     angle_dict = {}
-    ss=[]
-    tt=[]
-    indices_ss=[]
-    indices_tt=[]
     for target in target_name:
         angle_dict[target] = []
-        for spilit_target in name_to_split_name_dict[target]:
+        for split_target in name_to_split_name_dict[target]:
             for source in source_name:
-                for spilit_source in name_to_split_name_dict[source]:
-                    # for a target and a source, the axon num should be SC[source, target]*constant, for a spilit_target and a spilit_source, the axon num should be SC[source, target]*constant*spilit_target_size/target_size*spilit_source_size/source_size
-                    target_size = 0
-                    for sub_target in name_to_split_name_dict[target]:
-                        target_size += pgon[sub_target].area
-                    source_size = 0
-                    for sub_source in name_to_split_name_dict[source]:
-                        source_size += pgon[sub_source].area
-                    for i in range(int(SC.loc[source, target]*scale_value*pgon[spilit_target].area/target_size*pgon[spilit_source].area/source_size)):
-                        t = pointpats_random_poisson(pgon[spilit_target], size=1, seed=i)
-                        index_t = spilit_target
-                        s = pointpats_random_poisson(pgon[spilit_source], size=1, seed=i)
-                        index_s = spilit_source
-                        tt.append(t)
-                        ss.append(s)
-                        indices_tt.append(index_t)
-                        indices_ss.append(index_s)
+                for split_source in name_to_split_name_dict[source]:
+                    sample_count = int(
+                        SC.loc[source, target]
+                        * scale_value
+                        * polygon_dict[split_target].area
+                        / area_size[target]
+                        * polygon_dict[split_source].area
+                        / area_size[source]
+                    )
+                    for i in range(sample_count):
+                        t = get_cached_point(split_target, i)
+                        s = get_cached_point(split_source, i)
                         angle_dict[target].append(cf.get_angle(source=[s[0], s[1]], target=[t[0], t[1]]))
     return angle_dict
 
 
 def get_direction_preference(SC_data, animal, dataset_key, mode='uniform', SC_model=None):
-    '''
-    获取每个脑区的方向偏好
-
-    mode: uniform, 将数据和均匀分布比较; model, 将数据和均匀分布得到的模型比较
-    '''
     animal_info = AnimalInfo(animal, dataset_key)
 
     data_angle_dict = get_angle_distribution_from_SC_dispersion(animal, dataset_key, SC_data, scale_value=10000)
@@ -2626,9 +2242,6 @@ def get_direction_preference(SC_data, animal, dataset_key, mode='uniform', SC_mo
 
 
 def get_category_longrange_connection(SC_data, animal, dataset_key, longrange_threshold, dim='2D'):
-    '''
-    获取每个category的长程连接数
-    '''
     animal_info = AnimalInfo(animal, dataset_key)
 
     if dim == '2D':
@@ -2637,9 +2250,9 @@ def get_category_longrange_connection(SC_data, animal, dataset_key, longrange_th
         distance_matrix = animal_info.distance_3D
 
     longrange_SC_data = SC_data[distance_matrix > longrange_threshold]
-    
+
     longrange_connection_sum = {}
-    longrange_possible_sum = {} # 可能的长程连接数(包括数据中有连接和没有连接的)
+    longrange_possible_sum = {}
 
     for source in animal_info.source_name:
         source_category = animal_info.area_category[source]
@@ -2649,14 +2262,14 @@ def get_category_longrange_connection(SC_data, animal, dataset_key, longrange_th
                 longrange_possible_sum[source_category] = longrange_possible_sum.get(source_category, 0) + 1
                 longrange_possible_sum[target_category] = longrange_possible_sum.get(target_category, 0) + 1
 
-                # 判断是否是nan
+
                 if np.isnan(longrange_SC_data.loc[source, target]):
                     continue
                 else:
                     longrange_connection_sum[source_category] = longrange_connection_sum.get(source_category, 0) + longrange_SC_data.loc[source, target]
                     longrange_connection_sum[target_category] = longrange_connection_sum.get(target_category, 0) + longrange_SC_data.loc[source, target]
-    
-    # 计算比例
+
+
     longrange_connection_proportion = {}
     for category in longrange_connection_sum.keys():
         longrange_connection_proportion[category] = longrange_connection_sum[category] / longrange_possible_sum[category]
@@ -2670,17 +2283,11 @@ def get_category_longrange_connection(SC_data, animal, dataset_key, longrange_th
 
 
 def max_distance_in_polygon(vertices):
-    '''
-    计算多边形的最大距离
-    '''
     distance_matrix = scipy.spatial.distance_matrix(vertices, vertices)
     return np.max(distance_matrix)
 
 
 def get_injection_deviation_rate(animal, dataset_key, mode='2D'):
-    '''
-    获取skewness
-    '''
     animal_info = AnimalInfo(animal, dataset_key)
     injection_deviation_rate_dict = {}
     target_name = animal_info.target_name
@@ -2711,7 +2318,7 @@ def get_injection_deviation_rate(animal, dataset_key, mode='2D'):
             for area in target_name:
                 distance = []
                 for inj in injection_site[area]:
-                    # 对于分裂的区域,取最近的距离
+
                     split_distance = []
                     for spilit_area in animal_info.name_to_split_name_dict[area]:
                         split_distance.append(np.linalg.norm(area_center_dict[spilit_area]-inj))
@@ -2734,11 +2341,6 @@ def get_injection_deviation_rate(animal, dataset_key, mode='2D'):
 
 
 def transform_combined_name_value_dict(combined_name_value_dict, source_animal, source_datasetkey, target_animal, target_dataset_key):
-    '''
-    combined_name_value_dict: {combined_name: value}
-    
-    将combined_name_value_dict中的key转换为target_animal和target_dataset_key的脑区名,并且将value保持不变
-    '''
     new_combined_name_value_dict = {}
     for combined_name, value in combined_name_value_dict.items():
         new_combined_name = transform_combined_name(combined_name, source_animal, source_datasetkey, target_animal, target_dataset_key)
@@ -2747,20 +2349,17 @@ def transform_combined_name_value_dict(combined_name_value_dict, source_animal, 
 
 
 def angle_distance_independence_test(angle, distance, angle_bin_num, distance_bin_num):
-    '''
-    角度和距离的独立性检验
-    '''
-    # 获取角度和距离的二维直方图
+
     prob_matrix, angle_bin_edge, distance_bin_edge, *_ = cf.get_hist_2d(angle, distance, angle_bin_num, distance_bin_num)
-    
-    # 获取角度和距离的边缘直方图
+
+
     angle_hist, *_ = cf.get_hist(angle, angle_bin_edge)
     distance_hist, *_ = cf.get_hist(distance, distance_bin_edge)
-    
-    # 计算独立假设下的理论频数矩阵
+
+
     independent_prob_matrix = np.outer(angle_hist, distance_hist)
 
-    # 计算KS距离和JSD
+
     kl = cf.get_kl_divergence(prob_matrix.flatten(), independent_prob_matrix.flatten())
     jsd = cf.get_jsd(prob_matrix.flatten(), independent_prob_matrix.flatten())
     result = {'KL': kl, 'JSD': jsd}
@@ -2772,16 +2371,10 @@ def SC_symmetry_index():
 
 
 def connection_proportion_inside_threshold(threshold_list, animal, dataset_key, SC_mode='binary', distance_mode='2D'):
-    '''
-    计算特定距离范围内的连接比例
-
-    distance_mode: 2D or 3D
-    SC_mode: binary or weight
-    '''
     animal_info = AnimalInfo(animal, dataset_key)
     SC_data = animal_info.SC_data
     processesd_SC_data = SC_data.copy()
-    processesd_SC_data = cf.get_sub_df(processesd_SC_data, animal_info.source_name, animal_info.target_name) # 只取source和target的部分
+    processesd_SC_data = cf.get_sub_df(processesd_SC_data, animal_info.source_name, animal_info.target_name)
     if SC_mode == 'binary':
         processesd_SC_data = (processesd_SC_data > 0).astype(int)
     elif SC_mode == 'weight':
@@ -2802,14 +2395,11 @@ def connection_proportion_inside_threshold(threshold_list, animal, dataset_key, 
 
 def multiple_injection_difference_ratio():
     pass
-# endregion
 
 
-# region visualization
-def show_value_on_flatmap(ax, animal, dataset_key, value_dict, cmap, cbar_label='', target=None, source=None, show_area_name=False, text_fontsize=cf.FONT_SIZE/3, norm_mode='linear', vmin=None, vmax=None, norm_kwargs=None, edgecolor=cf.BLACK, cbar=True, cbar_position=None, fill=True, adjust_lim=True, polygon_kwargs=None, cbar_kwargs=None, set_xylim=True):
-    '''
-    在flatmap上显示value_dict的值,有两种使用方式,指定某个target或者source以specific_color显示,其余值用cmap显示,如果不指定target和source,则所有值用cmap显示
-    '''
+
+
+def plot_show_value_on_flatmap(ax, animal, dataset_key, value_dict, cmap, cbar_label='', target=None, source=None, show_area_name=False, text_fontsize=cf.FONT_SIZE/3, norm_mode='linear', vmin=None, vmax=None, norm_kwargs=None, edgecolor=cf.BLACK, cbar=True, cbar_position=None, fill=True, adjust_lim=True, polygon_kwargs=None, cbar_kwargs=None, set_xylim=True):
     animal_info = AnimalInfo(animal, dataset_key)
     name_location_dict = animal_info.name_location_dict
     coords_dict = animal_info.coords_dict
@@ -2844,15 +2434,12 @@ def show_value_on_flatmap(ax, animal, dataset_key, value_dict, cmap, cbar_label=
         ax.set_ylim(new_ylim)
 
 
-def show_area_centers_on_flatmap(ax, animal, dataset_key, color=cf.BLACK, s=80, mode='only_largest', zorder=None):
-    '''
-    在flatmap上显示脑区中心点
-    '''
+def plot_show_area_centers_on_flatmap(ax, animal, dataset_key, color=cf.BLACK, s=80, mode='only_largest', zorder=None):
     animal_info = AnimalInfo(animal, dataset_key)
     area_center_dict = animal_info.area_center_dict
 
     if mode == 'only_largest':
-        # 只显示每个脑区中面积最大的split的中心点
+
         filtered_area_center_dict = {}
         for area in animal_info.full_name:
             max_split = None
@@ -2875,77 +2462,60 @@ def show_area_centers_on_flatmap(ax, animal, dataset_key, color=cf.BLACK, s=80, 
             else:
                 cf.plt_scatter(ax, x=center[0], y=center[1], color=color, s=s)
 
-def show_connection_on_flatmap(ax, animal, dataset_key, SC, show_area_name=False, text_fontsize=cf.FONT_SIZE/3, vmin=0.001, vmax=0.2, edgecolor=cf.BLACK, set_xylim=True, selected_target_area_list=None, top_edges=0.1, mode='global'):
-    """
-    在flatmap上显示连接
-    
-    Parameters:
-    -----------
-    mode : str
-        'global' - 全局筛选top_edges
-        'per_target' - 对每个target脑区单独筛选top_edges
-    top_edges : float, int, dict or list
-        根据mode不同有不同的含义
-        - mode='global'时: 可以是比例(0-1)或具体数量
-        - mode='per_target'时: 
-            * 如果是float: 对每个target脑区使用相同的比例
-            * 如果是int: 对每个target脑区使用相同的数量
-            * 如果是dict: {target_area: value} 为每个脑区指定不同的值
-            * 如果是list: 按顺序为每个脑区指定值,长度需与selected_target_area_list相同
-    """
+def plot_show_connection_on_flatmap(ax, animal, dataset_key, SC, show_area_name=False, text_fontsize=cf.FONT_SIZE/3, vmin=0.001, vmax=0.2, edgecolor=cf.BLACK, set_xylim=True, selected_target_area_list=None, top_edges=0.1, mode='global'):
     animal_info = AnimalInfo(animal, dataset_key)
-    show_area_boundary(ax, animal, dataset_key, show_area_name=show_area_name, text_fontsize=text_fontsize, edgecolor=edgecolor, set_xylim=set_xylim)
+    plot_show_area_boundary(ax, animal, dataset_key, show_area_name=show_area_name, text_fontsize=text_fontsize, edgecolor=edgecolor, set_xylim=set_xylim)
 
     new_max = cf.LINE_WIDTH * 1.5
     new_min = cf.LINE_WIDTH * 0.05
 
-    # 收集所有连接的权重
+
     connections = []
     area_center_dict = animal_info.area_center_dict
-    
+
     for area in selected_target_area_list:
         for source_area in animal_info.source_name:
             weight = SC.loc[source_area, area]
             if weight > 0:
                 connections.append((source_area, area, weight))
-    
-    # 根据mode和top_edges参数筛选连接
+
+
     if top_edges is not None:
         if mode == 'global':
-            # 全局模式：按权重降序排序，筛选top_edges
+
             connections.sort(key=lambda x: x[2], reverse=True)
-            
-            if 0 < top_edges <= 1:  # 如果是比例
+
+            if 0 < top_edges <= 1:
                 n_edges = int(len(connections) * top_edges)
-            else:  # 如果是具体数量
+            else:
                 n_edges = int(top_edges)
-            
-            # 确保不超过连接总数
+
+
             n_edges = min(n_edges, len(connections))
             connections = connections[:n_edges]
-            
+
         elif mode == 'per_target':
-            # 对每个target脑区单独筛选
+
             filtered_connections = []
-            
+
             for target_area in selected_target_area_list:
-                # 获取该target脑区的所有连接
+
                 target_connections = [conn for conn in connections if conn[1] == target_area]
                 if not target_connections:
                     continue
-                    
-                # 按权重降序排序
+
+
                 target_connections.sort(key=lambda x: x[2], reverse=True)
-                
-                # 确定该脑区要保留的连接数量
+
+
                 if isinstance(top_edges, (int, float)):
-                    # 统一值：float为比例，int为数量
+
                     if 0 < top_edges <= 1:
                         n_edges = int(len(target_connections) * top_edges)
                     else:
                         n_edges = int(top_edges)
                 elif isinstance(top_edges, dict):
-                    # 字典：为每个脑区指定不同的值
+
                     if target_area in top_edges:
                         edge_value = top_edges[target_area]
                         if 0 < edge_value <= 1:
@@ -2953,9 +2523,9 @@ def show_connection_on_flatmap(ax, animal, dataset_key, SC, show_area_name=False
                         else:
                             n_edges = int(edge_value)
                     else:
-                        n_edges = len(target_connections)  # 未指定的脑区保留所有连接
+                        n_edges = len(target_connections)
                 elif isinstance(top_edges, list):
-                    # 列表：按顺序指定
+
                     idx = selected_target_area_list.index(target_area)
                     if idx < len(top_edges):
                         edge_value = top_edges[idx]
@@ -2967,16 +2537,16 @@ def show_connection_on_flatmap(ax, animal, dataset_key, SC, show_area_name=False
                         n_edges = len(target_connections)
                 else:
                     n_edges = len(target_connections)
-                
-                # 确保不超过该脑区的连接总数
+
+
                 n_edges = max(1, min(n_edges, len(target_connections)))
                 filtered_connections.extend(target_connections[:n_edges])
-            
+
             connections = filtered_connections
-    
-    # 绘制筛选后的连接
+
+
     for source_area, area, weight in connections:
-        # 找到source_area中面积最大的split
+
         max_source_split = None
         max_source_area = 0
         for spilit_source_area in animal_info.name_to_split_name_dict[source_area]:
@@ -2984,8 +2554,8 @@ def show_connection_on_flatmap(ax, animal, dataset_key, SC, show_area_name=False
             if spilit_source_area_size > max_source_area:
                 max_source_area = spilit_source_area_size
                 max_source_split = spilit_source_area
-        
-        # 找到area中面积最大的split
+
+
         max_area_split = None
         max_area_size = 0
         for spilit_area in animal_info.name_to_split_name_dict[area]:
@@ -2993,37 +2563,34 @@ def show_connection_on_flatmap(ax, animal, dataset_key, SC, show_area_name=False
             if spilit_area_size > max_area_size:
                 max_area_size = spilit_area_size
                 max_area_split = spilit_area
-        
-        # 只绘制最大面积split之间的连接
+
+
         if max_source_split and max_area_split:
             start = area_center_dict[max_source_split]
             end = area_center_dict[max_area_split]
-            
+
             if weight >= vmax:
                 linewidth = new_max
             elif weight <= vmin:
-                linewidth = 0.  # clipped
+                linewidth = 0.
             else:
                 linewidth = cf.scale_to_new_range(data=weight, old_min=vmin, old_max=vmax, new_min=new_min, new_max=new_max)
-            
+
             cf.plt_line(ax, x=[start[0], end[0]], y=[start[1], end[1]], color=cf.CRIMSON, linewidth=linewidth, alpha=0.7)
-    show_area_centers_on_flatmap(ax, animal, dataset_key, color=cf.BLACK, mode='only_largest', zorder=10000)
+    plot_show_area_centers_on_flatmap(ax, animal, dataset_key, color=cf.BLACK, mode='only_largest', zorder=10000)
 
 
-def show_area_boundary(ax, animal, dataset_key, show_area_name=False, text_fontsize=cf.FONT_SIZE/3, edgecolor=cf.BLACK, set_xylim=True):
-    '''
-    在flatmap上画出脑区边界
-    '''
+def plot_show_area_boundary(ax, animal, dataset_key, show_area_name=False, text_fontsize=cf.FONT_SIZE/3, edgecolor=cf.BLACK, set_xylim=True):
     animal_info = AnimalInfo(animal, dataset_key)
     value_dict = {area: 0 for area in animal_info.full_name}
     cmap = cf.get_cmap([cf.TRANSPARENT])
-    show_value_on_flatmap(ax, animal, dataset_key, value_dict=value_dict, show_area_name=show_area_name, text_fontsize=text_fontsize, edgecolor=edgecolor, fill=False, cbar=False, cmap=cmap, set_xylim=set_xylim)
+    plot_show_value_on_flatmap(ax, animal, dataset_key, value_dict=value_dict, show_area_name=show_area_name, text_fontsize=text_fontsize, edgecolor=edgecolor, fill=False, cbar=False, cmap=cmap, set_xylim=set_xylim)
 
 
-def show_whole_cortex_boundary(ax, animal, dataset_key, edgecolor=cf.BLACK, set_xylim=True):
+def plot_show_whole_cortex_boundary(ax, animal, dataset_key, edgecolor=cf.BLACK, set_xylim=True):
     animal_info = AnimalInfo(animal, dataset_key)
     whole_cortex_coords = animal_info.whole_cortex_coords
-    
+
     cf.plt_polygon(ax, whole_cortex_coords, color=edgecolor, fill=False)
 
     ax.axis('off')
@@ -3036,10 +2603,7 @@ def show_whole_cortex_boundary(ax, animal, dataset_key, edgecolor=cf.BLACK, set_
         ax.set_ylim(new_ylim)
 
 
-def draw_rectangle_for_connection_matrix(ax, animal, dataset_key):
-    '''
-    在连接矩阵上画出矩形,用于区分实验已知部分和位置部分
-    '''
+def plot_draw_rectangle_for_connection_matrix(ax, animal, dataset_key):
     color = cf.GREEN
     linestyle = '--'
     animal_info = AnimalInfo(animal, dataset_key)
@@ -3053,10 +2617,7 @@ def draw_rectangle_for_connection_matrix(ax, animal, dataset_key):
     cf.plt_line(ax, x=[0, target_num], y=[source_num, source_num], color=color, linestyle=linestyle)
 
 
-def draw_mask_for_unmeasured_block(ax, animal, dataset_key):
-    '''
-    在连接矩阵上画出mask,用于区分未测量部分
-    '''
+def plot_draw_mask_for_unmeasured_block(ax, animal, dataset_key):
     animal_info = AnimalInfo(animal, dataset_key)
     target_name = animal_info.target_name
     source_name = animal_info.source_name
@@ -3082,11 +2643,7 @@ def draw_mask_for_unmeasured_block(ax, animal, dataset_key):
     cf.sns_heatmap(ax, unmeasured_matrix, show_xtick=False, show_ytick=False, cmap=cmap, cbar=False, heatmap_kwargs={'rasterized': True})
 
 
-def visualize_connection_matrix_heatmap(ax_data, ax_model, matrix_data, matrix_model, animal, dataset_key, log_matrix=False, topo=False, show_correlation=True):
-    '''
-    log_matrix: 是否对矩阵取log
-    topo: 是否将矩阵转化为拓扑矩阵
-    '''
+def plot_visualize_connection_matrix_heatmap(ax_data, ax_model, matrix_data, matrix_model, animal, dataset_key, log_matrix=False, topo=False, show_correlation=True):
     animal_info = AnimalInfo(animal, dataset_key)
     reordered_full_name_clustered = animal_info.reordered_full_name_clustered
     SC_type = animal_info.SC_type
@@ -3115,27 +2672,27 @@ def visualize_connection_matrix_heatmap(ax_data, ax_model, matrix_data, matrix_m
         vmax = 1.
     else:
         cmap = plt.cm.jet
-    
+
     local_matrix_data = cf.reorder_df(local_matrix_data, reordered_full_name_clustered, reordered_full_name_clustered)
     local_matrix_model = cf.reorder_df(local_matrix_model, reordered_full_name_clustered, reordered_full_name_clustered)
 
-    # 将nan变为0
+
     local_matrix_data = cf.process_nan(local_matrix_data, nan_policy='fill', fill_value=0.)
     local_matrix_model = cf.process_nan(local_matrix_model, nan_policy='fill', fill_value=0.)
 
     ticks = [vmin, vmax]
 
-    # 连接矩阵
+
     cbar_kwargs = {'add_geq': add_geq, 'ticks': ticks}
     cf.sns_heatmap(ax_data, local_matrix_data, show_xtick=False, show_ytick=False, cmap=cmap, vmin=vmin, vmax=vmax, cbar_kwargs=cbar_kwargs, heatmap_kwargs={'rasterized': True})
     cf.sns_heatmap(ax_model, local_matrix_model, show_xtick=False, show_ytick=False, cmap=cmap, vmin=vmin, vmax=vmax, cbar_kwargs=cbar_kwargs, heatmap_kwargs={'rasterized': True})
 
-    # 未测量部分
-    draw_mask_for_unmeasured_block(ax_data, animal=animal, dataset_key=dataset_key)
-    
-    # 用框指示已测量部分
-    draw_rectangle_for_connection_matrix(ax_data, animal=animal, dataset_key=dataset_key)
-    draw_rectangle_for_connection_matrix(ax_model, animal=animal, dataset_key=dataset_key)
+
+    plot_draw_mask_for_unmeasured_block(ax_data, animal=animal, dataset_key=dataset_key)
+
+
+    plot_draw_rectangle_for_connection_matrix(ax_data, animal=animal, dataset_key=dataset_key)
+    plot_draw_rectangle_for_connection_matrix(ax_model, animal=animal, dataset_key=dataset_key)
 
     cf.set_ax(ax_data, title='Data', xlabel='Target', ylabel='Source')
     cf.set_ax(ax_model, title='Model', xlabel='Target', ylabel='Source')
@@ -3145,10 +2702,7 @@ def visualize_connection_matrix_heatmap(ax_data, ax_model, matrix_data, matrix_m
         cf.add_text(ax_model, x=0.5, y=1.25, text='Corr='+str(round(corr, 3)), va='center', ha='center', fontsize=cf.LABEL_SIZE)
 
 
-def visualize_distribution_repeated_by_SC(ax, some_property, SC, minimal_tol=None, distribution_type='CDF', distribution_kwargs=None):
-    '''
-    利用SC来repeat得到property的比例
-    '''
+def plot_visualize_distribution_repeated_by_SC(ax, some_property, SC, minimal_tol=None, distribution_type='CDF', distribution_kwargs=None):
     SC_int = scale_SC_to_int(SC, minimal_tol=minimal_tol)
     repeated_property = cf.repeat_data(some_property, SC_int)
     distribution_kwargs = cf.update_dict({}, distribution_kwargs)
@@ -3159,10 +2713,7 @@ def visualize_distribution_repeated_by_SC(ax, some_property, SC, minimal_tol=Non
         return plt_hist_instance
 
 
-def visualize_data_model_distribution_repeated_by_SC(ax, some_property, SC_data, SC_model, minimal_tol=None, distribution_type='CDF', distribution_kwargs=None):
-    '''
-    可视化模型和数据的分布
-    '''
+def plot_visualize_data_model_distribution_repeated_by_SC(ax, some_property, SC_data, SC_model, minimal_tol=None, distribution_type='CDF', distribution_kwargs=None):
     SC_data_int = scale_SC_to_int(SC_data, minimal_tol=minimal_tol)
     SC_model_int = scale_SC_to_int(SC_model, minimal_tol=minimal_tol)
     repeated_property_data = cf.repeat_data(some_property, SC_data_int)
@@ -3174,13 +2725,11 @@ def visualize_data_model_distribution_repeated_by_SC(ax, some_property, SC_data,
         pass
 
 
-def visualize_data_uniform_distribution_repeated_by_SC(ax, some_property, SC_data, minimal_tol=None, distribution_type='CDF', distribution_kwargs=None):
-    '''
-    可视化数据和均匀分布的分布
-    '''
+def plot_visualize_data_uniform_distribution_repeated_by_SC(ax, some_property, SC_data, seed, minimal_tol=None, distribution_type='CDF', distribution_kwargs=None):
     SC_data_int = scale_SC_to_int(SC_data, minimal_tol=minimal_tol)
     repeated_property_data = cf.repeat_data(some_property, SC_data_int)
-    uniform_data = np.random.uniform(low=np.min(repeated_property_data), high=np.max(repeated_property_data), size=len(repeated_property_data))
+    rng = cf.get_local_rng(seed)
+    uniform_data = rng.uniform(low=np.min(repeated_property_data), high=np.max(repeated_property_data), size=len(repeated_property_data))
     distribution_kwargs = cf.update_dict({}, distribution_kwargs)
     if distribution_type == 'CDF':
         cf.plt_compare_cdf_ks(ax, data1=uniform_data, data2=repeated_property_data, color1=cf.BLACK, color2=DATA_COLOR, label1='uniform', label2='data', fontsize=cf.TITLE_SIZE, cdf_kwargs={'linewidth': 1.5*cf.LINE_WIDTH}, **distribution_kwargs)
@@ -3188,13 +2737,13 @@ def visualize_data_uniform_distribution_repeated_by_SC(ax, some_property, SC_dat
         pass
 
 
-def visualize_macaque_marmoset_performance_similarity(ax, macaque_performance_dict, marmoset_performance_dict):
+def plot_visualize_macaque_marmoset_performance_similarity(ax, macaque_performance_dict, marmoset_performance_dict):
     combined_macaque_performance_dict = coarse_grain_to_combined(macaque_performance_dict, 'macaque', 'markov40')
     combined_marmoset_performance_dict = coarse_grain_to_combined(marmoset_performance_dict, 'marmoset', 'majka')
 
     transformed_combined_macaque_performance_dict = transform_combined_name_value_dict(combined_macaque_performance_dict, source_animal='macaque', source_datasetkey='markov40', target_animal='marmoset', target_dataset_key='majka')
 
-    # 求出两个字典的交集
+
     common_area = set(transformed_combined_macaque_performance_dict.keys()) & set(combined_marmoset_performance_dict.keys())
     insect_transformed_combined_macaque_performance_dict = cf.get_sub_dict(transformed_combined_macaque_performance_dict, common_area)
     insect_combined_marmoset_performance_dict = cf.get_sub_dict(combined_marmoset_performance_dict, common_area)
@@ -3202,18 +2751,18 @@ def visualize_macaque_marmoset_performance_similarity(ax, macaque_performance_di
     x = list(insect_transformed_combined_macaque_performance_dict.values())
     y = list(insect_combined_marmoset_performance_dict.values())
     cf.plt_linregress(ax, x, y, show_list=['p', 'r'], scatter_kwargs={'s': 70.})
-    
+
     right_move_x_dict = insect_combined_marmoset_performance_dict.copy()
     for key in right_move_x_dict.keys():
         right_move_x_dict[key] += 0.02
-    
+
     text_obj_list = cf.add_multi_text_by_dict(ax, insect_transformed_combined_macaque_performance_dict, insect_combined_marmoset_performance_dict, transform='data', fontsize=cf.FONT_SIZE, ha='left', va='bottom')
-    cf.auto_adjust_text(ax, text_obj_list, add_arrow=False)
+    cf.auto_adjust_text(ax, text_obj_list, add_arrow=False, seed=0)
 
     cf.set_ax(ax, xlabel='Performance (macaque)', ylabel='Performance (marmoset)')
 
 
-def visualize_scaling_law(ax, single_visualizer_list, dim='2D'):
+def plot_visualize_scaling_law(ax, single_visualizer_list, dim='2D'):
     Lambda_list = []
     max_distance_list = []
     for single_visualizer in single_visualizer_list:
@@ -3228,14 +2777,14 @@ def visualize_scaling_law(ax, single_visualizer_list, dim='2D'):
 
         Lambda = OPTIMAL_PARAMS[animal_and_dataset_key]['Lambda']
         Lambda_list.append(Lambda)
-    
+
     cf.plt_linregress(ax, x=max_distance_list, y=Lambda_list, xlog=True, ylog=True, show_list=['slope'], scatter_kwargs={'marker': '*', 's': 1000.})
     for i in range(len(single_visualizer_list)):
         animal = single_visualizer_list[i].animal
         x = max_distance_list[i]
         y = Lambda_list[i]
         cf.add_text(ax, x=x*1.2, y=y, text=animal, va='top', ha='left', transform='data')
-    cf.set_ax(ax, xlabel='Max distance (mm)', ylabel='Optimal $\Lambda$ (mm)', xlog=True, ylog=True)
+    cf.set_ax(ax, xlabel='Max distance (mm)', ylabel=r'Optimal $\Lambda$ (mm)', xlog=True, ylog=True)
 
 
 def get_longrange_proportion_correlation(single_visualizer_list, dim='2D'):
@@ -3243,39 +2792,37 @@ def get_longrange_proportion_correlation(single_visualizer_list, dim='2D'):
     corr_pd = pd.DataFrame(columns=animal_list, index=animal_list, dtype=float)
     area_category_in_order = get_area_category_in_order()
     precomputed_arrays = []
-    
+
     for sv in single_visualizer_list:
         longrange_data = sv.get_category_longrange_SC(dim=dim)['longrange_connection_sum']
-        # 按固定顺序提取区域值
+
         longrange_array = np.array([longrange_data[cat] for cat in area_category_in_order])
         precomputed_arrays.append(longrange_array)
-    
+
     n = len(animal_list)
-    
-    # 使用预先计算的列表进行相关性计算
+
+
     for i in range(n):
         sum_i = precomputed_arrays[i]
         for j in range(n):
             sum_j = precomputed_arrays[j]
-            # corr = st.spearmanr(sum_i, sum_j).correlation
+
             corr = np.corrcoef(sum_i, sum_j)[0, 1]
             corr_pd.loc[animal_list[i], animal_list[j]] = corr
-    
+
     return corr_pd
 
 
-def visualize_longrange_proportion_correlation_heatmap(ax, single_visualizer_list, dim='2D'):
+def plot_visualize_longrange_proportion_correlation_heatmap(ax, single_visualizer_list, dim='2D'):
     corr_pd = get_longrange_proportion_correlation(single_visualizer_list, dim=dim)
     cmap = cf.get_cmap([cf.WHITE, cf.RED])
     cf.sns_heatmap(ax, corr_pd, cmap=cmap, vmin=0, vmax=1, cbar_label='Correlation', show_xtick=True, show_ytick=True, heatmap_kwargs={'annot': True, 'fmt': '.2f'})
 
 
-class SingleCaseVisualizer(cf.SingleVisualizer):
-    '''
-    进行单个动物的可视化
-    '''
+class SingleCaseVisualizer:
     def __init__(self, animal, dataset_key, model_timedir):
-        super().__init__(title=cf.cat(animal, dataset_key))
+        self.title = cf.cat(animal, dataset_key)
+        self.save_fig_kwargs = {}
         self.animal = animal
         self.dataset_key = dataset_key
         self.animal_and_dataset_key = cf.cat(animal, dataset_key)
@@ -3286,12 +2833,12 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         self.minimal_tol = np.min(SC_data_array[SC_data_array > 0])
         self.bin_num = cf.BIN_NUM
 
-        self.axon_growth_model = AxonGrowthModel()
-        self.axon_growth_model.set_timedir(model_timedir)
-        self.SC_model = self.axon_growth_model.get_suitable_SC_model()
-        self.SC_model_masked = self.axon_growth_model.get_suitable_SC_model_masked_as_data()
+        self.connection_model = ConnectionGenerationModel()
+        self.connection_model.set_timedir(model_timedir)
+        self.SC_model = self.connection_model.get_suitable_SC_model()
+        self.SC_model_masked = self.connection_model.get_suitable_SC_model_masked_as_data()
 
-    def connection_on_flatmap(self, ax, data_or_model, which_area, show_value_on_flatmap_kwargs=None):
+    def plot_connection_on_flatmap(self, ax, data_or_model, which_area, show_value_on_flatmap_kwargs=None):
         if data_or_model == 'model':
             SC = self.SC_model_masked
         elif data_or_model == 'data':
@@ -3314,28 +2861,28 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
             cmap = cf.get_cmap([cf.TRANSPARENT, TARGET_COLOR])
             for t in self.animal_info.target_name:
                 value_dict[t] = SC.loc[which_area, t]
-        
-        show_value_on_flatmap(ax, animal=self.animal, dataset_key=self.dataset_key, value_dict=value_dict, cmap=cmap, cbar_label='SC', source=source, target=target, vmax=vmax, **show_value_on_flatmap_kwargs)
+
+        plot_show_value_on_flatmap(ax, animal=self.animal, dataset_key=self.dataset_key, value_dict=value_dict, cmap=cmap, cbar_label='SC', source=source, target=target, vmax=vmax, **show_value_on_flatmap_kwargs)
         cf.set_ax(ax, title=data_or_model+'\n'+which_area)
 
-    def connection_by_arrows_on_flatmap(self, ax, data_or_model, selected_target_area_list, show_area_name=False, text_fontsize=cf.FONT_SIZE/3, show_connection_on_flatmap_kwargs=None):
+    def plot_connection_by_arrows_on_flatmap(self, ax, data_or_model, selected_target_area_list, show_area_name=False, text_fontsize=cf.FONT_SIZE/3, show_connection_on_flatmap_kwargs=None):
         if data_or_model == 'model':
-            # SC = self.SC_model_masked
+
             SC = self.SC_model
         elif data_or_model == 'data':
             SC = self.SC_data
 
         show_connection_on_flatmap_kwargs = cf.update_dict({}, show_connection_on_flatmap_kwargs)
-        show_connection_on_flatmap(ax, animal=self.animal, dataset_key=self.dataset_key, SC=SC, selected_target_area_list=selected_target_area_list, show_area_name=show_area_name, text_fontsize=text_fontsize, **show_connection_on_flatmap_kwargs, edgecolor=(0, 0, 0, 0.3))
+        plot_show_connection_on_flatmap(ax, animal=self.animal, dataset_key=self.dataset_key, SC=SC, selected_target_area_list=selected_target_area_list, show_area_name=show_area_name, text_fontsize=text_fontsize, **show_connection_on_flatmap_kwargs, edgecolor=(0, 0, 0, 0.3))
         cf.set_ax(ax, title=data_or_model)
 
-    def vector_field(self, ax):
+    def plot_vector_field(self, ax):
         pass
 
-    def data_model_SC(self, ax_model, ax_data, topo=False, show_correlation=True):
-        visualize_connection_matrix_heatmap(ax_data, ax_model, matrix_data=self.SC_data, matrix_model=self.SC_model, animal=self.animal, dataset_key=self.dataset_key, log_matrix=False, topo=topo, show_correlation=show_correlation)
+    def plot_data_model_SC(self, ax_model, ax_data, topo=False, show_correlation=True):
+        plot_visualize_connection_matrix_heatmap(ax_data, ax_model, matrix_data=self.SC_data, matrix_model=self.SC_model, animal=self.animal, dataset_key=self.dataset_key, log_matrix=False, topo=topo, show_correlation=show_correlation)
 
-    def area_level_performance(self, ax, performance_metric='correlation', sort=True, SC_data=None, SC_model=None, diagonal=False):
+    def plot_area_level_performance(self, ax, performance_metric='correlation', sort=True, SC_data=None, SC_model=None, diagonal=False):
         if SC_data is None:
             SC_data = self.SC_data
         if SC_model is None:
@@ -3350,12 +2897,12 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         cf.add_hline(ax, y=np.nanmean(list(performance_dict.values())), color=cf.GREEN, linestyle='--', label='mean')
         cf.set_ax(ax, xlabel='Area', ylabel=performance_metric, xtick_rotation=90)
 
-    def distance_distribution(self, ax, data_or_model, dim='2D', distribution_kwargs=None, linregress=False, linregress_kwargs=None):
+    def plot_distance_distribution(self, ax, data_or_model, dim='2D', distribution_kwargs=None, linregress=False, linregress_kwargs=None):
         if dim == '2D':
             distance_matrix = self.animal_info.distance_2D
         elif dim == '3D':
             distance_matrix = self.animal_info.distance_3D
-        
+
         if data_or_model == 'model':
             SC = self.SC_model_masked
             color = MODEL_COLOR
@@ -3365,20 +2912,20 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
 
         distribution_kwargs = cf.update_dict({'color': color}, distribution_kwargs)
 
-        plt_hist_instance = visualize_distribution_repeated_by_SC(ax, distance_matrix, SC, minimal_tol=self.minimal_tol, distribution_type='hist', distribution_kwargs=distribution_kwargs)
+        plt_hist_instance = plot_visualize_distribution_repeated_by_SC(ax, distance_matrix, SC, minimal_tol=self.minimal_tol, distribution_type='hist', distribution_kwargs=distribution_kwargs)
         if linregress:
             linregress_kwargs = cf.update_dict({}, linregress_kwargs)
 
             hist = plt_hist_instance.hist
             mid_point = plt_hist_instance.mid_point
             regress_dict = cf.plt_linregress(ax, x=mid_point, y=hist, ylog=True, line_color=cf.BLACK, show_scatter=False, show_list=[], **linregress_kwargs)
-            regress_dict['$\Lambda$'] = -1 / (regress_dict['slope'] * np.log(10)) # transform to e base to get lambda
+            regress_dict[r'$\Lambda$'] = -1 / (regress_dict['slope'] * np.log(10))
             unit_dict = cf.create_dict(keys=regress_dict.keys(), default_value=None)
-            unit_dict['$\Lambda$'] = 'mm'
-            cf.add_text_by_dict(ax, regress_dict, show_list=['p', '$\Lambda$'], unit_dict=unit_dict, text_x=0.45, text_y=0.9, fontsize=cf.LABEL_SIZE*0.75)
+            unit_dict[r'$\Lambda$'] = 'mm'
+            cf.add_text_by_dict(ax, regress_dict, show_list=['p', r'$\Lambda$'], unit_dict=unit_dict, text_x=0.45, text_y=0.9, fontsize=cf.LABEL_SIZE*0.75)
         cf.set_ax(ax, xlabel=f'Distance {dim} (mm)', ylog=True, title=data_or_model)
 
-    def angle_distribution(self, ax, data_or_model, dim='2D', distribution_kwargs=None):
+    def plot_angle_distribution(self, ax, data_or_model, dim='2D', distribution_kwargs=None):
         if data_or_model == 'model':
             SC = self.SC_model_masked
             color = MODEL_COLOR
@@ -3389,15 +2936,15 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         if dim == '2D':
             distribution_kwargs = cf.update_dict({'color': color}, distribution_kwargs)
             angle_matrix = self.animal_info.angle_2D
-            visualize_distribution_repeated_by_SC(ax, angle_matrix, SC, minimal_tol=self.minimal_tol, distribution_type='CDF', distribution_kwargs=distribution_kwargs)
+            plot_visualize_distribution_repeated_by_SC(ax, angle_matrix, SC, minimal_tol=self.minimal_tol, distribution_type='CDF', distribution_kwargs=distribution_kwargs)
             cf.set_ax(ax, xlabel='Angle', ylabel='CDF', legend_loc='lower right')
         elif dim == '3D':
             angle_3D_dict = self.animal_info.angle_3D
             azim_matrix = angle_3D_dict['azim']
             elev_matrix = angle_3D_dict['elev']
-            
+
             SC_int = scale_SC_to_int(SC, minimal_tol=self.minimal_tol)
-            
+
             azim_value = cf.repeat_data(azim_matrix, SC_int)
             elev_value = cf.repeat_data(elev_matrix, SC_int)
 
@@ -3407,32 +2954,28 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
             cf.set_ax(ax, xlabel='Azimuth', ylabel='Elevation', title=data_or_model)
             return angle_heatmap
 
-    def data_model_angle_distribution(self, ax, dim='2D'):
-        '''
-        for 2D, same ax
-        for 3D, ax be shape (2,) with ax[0] data and ax[1] model
-        '''
+    def plot_data_model_angle_distribution(self, ax, dim='2D'):
         if dim == '2D':
             angle_matrix = self.animal_info.angle_2D
-            visualize_data_model_distribution_repeated_by_SC(ax, angle_matrix, self.SC_data, self.SC_model_masked, minimal_tol=self.minimal_tol, distribution_type='CDF', distribution_kwargs=None)
+            plot_visualize_data_model_distribution_repeated_by_SC(ax, angle_matrix, self.SC_data, self.SC_model_masked, minimal_tol=self.minimal_tol, distribution_type='CDF', distribution_kwargs=None)
             cf.set_ax(ax, xlabel='Angle', ylabel='CDF', legend_loc='lower right')
         elif dim == '3D':
-            r_data = self.angle_distribution(ax[0], data_or_model='data', dim='3D')
-            r_model = self.angle_distribution(ax[1], data_or_model='model', dim='3D')
+            r_data = self.plot_angle_distribution(ax[0], data_or_model='data', dim='3D')
+            r_model = self.plot_angle_distribution(ax[1], data_or_model='model', dim='3D')
             jsd = cf.get_jsd(r_data.flatten(), r_model.flatten())
             ax[0].set_title('')
             ax[1].set_title('')
             cf.add_text(ax[1], x=0.5, y=1.7, text=f'JSD={round(jsd, 3)}', va='center', ha='center', fontsize=cf.LABEL_SIZE)
 
-    def data_uniform_angle_distribution(self, ax, dim='2D'):
+    def plot_data_uniform_angle_distribution(self, ax, dim='2D'):
         if dim == '2D':
             angle_matrix = self.animal_info.angle_2D
-            visualize_data_uniform_distribution_repeated_by_SC(ax, angle_matrix, self.SC_data, minimal_tol=self.minimal_tol, distribution_type='CDF', distribution_kwargs={'show_list': ['KS']})
+            plot_visualize_data_uniform_distribution_repeated_by_SC(ax, angle_matrix, self.SC_data, seed=0, minimal_tol=self.minimal_tol, distribution_type='CDF', distribution_kwargs={'show_list': ['KS']})
             cf.set_ax(ax, xlabel='Angle', ylabel='CDF', legend_loc='lower right')
         elif dim == '3D':
             raise NotImplementedError
 
-    def data_angle_uniform_index_with_distance_threshold(self, ax, distance_threshold_list, dim='2D'):
+    def plot_data_angle_uniform_index_with_distance_threshold(self, ax, distance_threshold_list, dim='2D'):
         if dim == '2D':
             distance_matrix = self.animal_info.distance_2D
             angle_matrix = self.animal_info.angle_2D
@@ -3444,31 +2987,31 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
                 try:
                     SC_data_int_masked = SC_data_int.copy()
                     SC_data_int_masked[distance_matrix < distance_threshold] = 0
-                    
+
                     repeated_property_data = cf.repeat_data(angle_matrix, SC_data_int_masked)
                     def uniform_cdf(x):
                         return scipy.stats.uniform.cdf(x, loc=-np.pi, scale=2*np.pi)
-                    
+
                     r = cf.get_ks_result(repeated_property_data, uniform_cdf)
                     r_list.append(r)
                     valid_distance_list.append(distance_threshold)
                 except:
                     pass
-            
+
             ks_list = [r_list[i]['ks'] for i in range(len(r_list))]
 
             cf.plt_scatter(ax, x=valid_distance_list, y=ks_list, marker='o', color=cf.BLUE)
-            cf.add_vline(ax, x=self.axon_growth_model.get_unique_Lambda() * 5, color=cf.RED, linestyle='--', label='$5\Lambda$')
+            cf.add_vline(ax, x=self.connection_model.get_unique_Lambda() * 5, color=cf.RED, linestyle='--', label=r'$5\Lambda$')
             cf.set_ax(ax, xlabel='threshold (mm)', ylabel='KS', legend_loc='lower right')
         elif dim == '3D':
             raise NotImplementedError
 
-    def intrinsic_proportion(self, ax):
+    def plot_intrinsic_proportion(self, ax):
         if self.animal_info.animal_and_dataset_key == 'marmoset_majka':
             target_name = self.animal_info.target_name
 
-            intrinsic_proportion_data = self.animal_info.intrinsic_proportion
-            intrinsic_proportion_model = get_intrinsic_proportion_from_SCt(self.axon_growth_model.SC_model_dict['FLNt'], self.animal, self.dataset_key)
+            intrinsic_proportion_data = self.animal_info.plot_intrinsic_proportion
+            intrinsic_proportion_model = get_intrinsic_proportion_from_SCt(self.connection_model.SC_model_dict['FLNt'], self.animal, self.dataset_key)
             intrinsic_proportion_data_flatten = [intrinsic_proportion_data[area] for area in self.animal_info.clustered_target_name]
             intrinsic_proportion_model_flatten = [intrinsic_proportion_model[area] for area in self.animal_info.clustered_target_name]
             x = range(len(target_name))
@@ -3477,19 +3020,19 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
             cf.add_text(ax, text='Corr='+str(round(corr, 3)), fontsize=cf.LABEL_SIZE)
             cf.set_ax(ax, xlabel='Area', ylabel='Intrinsic proportion', xtick=x, xtick_label=target_name, xtick_rotation=90, ylim=[-1, 1])
 
-    def distance_SC_scatter(self, ax, data_or_model, dim='2D'):
+    def plot_distance_SC_scatter(self, ax, data_or_model, dim='2D'):
         if dim == '2D':
             distance_matrix = self.animal_info.distance_2D
         elif dim == '3D':
             distance_matrix = self.animal_info.distance_3D
-        
+
         if data_or_model == 'model':
             SC = self.SC_model_masked
         elif data_or_model == 'data':
             SC = self.SC_data
 
         cmap = plt.cm.coolwarm
-        
+
         flatten_distance = distance_matrix.values.flatten()
 
         SC_logged = log_SC(SC, self.animal, self.dataset_key, apply_c=False, apply_w=False)
@@ -3503,7 +3046,7 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         cf.plt_density_scatter(ax, flatten_distance, flatten_SC_logged, cmap=cmap, cbar_kwargs={'ticks': []})
         cf.set_ax(ax, xlabel=f'Distance {dim} (mm)', ylabel='log(SC)', title=data_or_model)
 
-    def SC_distribution(self, ax, data_or_model, log_scale=True, distribution_kwargs=None):
+    def plot_SC_distribution(self, ax, data_or_model, log_scale=True, distribution_kwargs=None):
         if data_or_model == 'model':
             SC = self.SC_model_masked
             color = MODEL_COLOR
@@ -3516,72 +3059,60 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         cf.sns_hist(ax, data=SC.values.flatten(), bins=self.bin_num, log_scale=log_scale, **distribution_kwargs)
         cf.set_ax(ax, xlabel='SC', title=data_or_model)
 
-    def retrograde_neuron_by_pos(self, ax, pos, radius):
-        '''
-        显示一个pos内的ss的所有presynaptic neuron
-        '''
-        ss = self.axon_growth_model.get_simulation_value('ss')
-        tt = self.axon_growth_model.get_simulation_value('tt')
-        
+    def plot_retrograde_neuron_by_pos(self, ax, pos, radius):
+        ss = self.connection_model.get_simulation_value('ss')
+        tt = self.connection_model.get_simulation_value('tt')
+
         tt_pos_distance = np.linalg.norm(tt - pos, axis=1)
         in_circle_index = np.where(tt_pos_distance < radius)[0]
         ss_corresponding = ss[in_circle_index]
-        
+
         cf.plt_scatter(ax, ss_corresponding[:, 0], ss_corresponding[:, 1], color=cf.BLACK, label='source neuron', s=5)
-        # show_whole_cortex_boundary(ax, animal=self.animal, dataset_key=self.dataset_key, edgecolor=cf.BLACK)
-        show_area_boundary(ax, animal=self.animal, dataset_key=self.dataset_key, show_area_name=False, edgecolor=cf.BLACK)
+
+        plot_show_area_boundary(ax, animal=self.animal, dataset_key=self.dataset_key, show_area_name=False, edgecolor=cf.BLACK)
 
         cf.add_circle_patch(ax, center=pos, radius=radius, edgecolor=cf.WHITE, facecolor=cf.WHITE)
 
-    def retrograde_neuron_by_area(self, ax, area):
-        '''
-        显示一个area的所有presynaptic neuron
-        '''
-        ss = self.axon_growth_model.get_simulation_value('ss')
-        indices_tt = self.axon_growth_model.get_simulation_value('indices_tt')
+    def plot_retrograde_neuron_by_area(self, ax, area):
+        ss = self.connection_model.get_simulation_value('ss')
+        indices_tt = self.connection_model.get_simulation_value('indices_tt')
 
         for split_area in self.animal_info.name_to_split_name_dict[area]:
-            # 找到indices_tt中为area的索引
+
             tt_indices_in_area_indices = np.where(indices_tt == split_area)[0]
             ss_corresponding = ss[tt_indices_in_area_indices]
 
             cf.plt_scatter(ax, ss_corresponding[:, 0], ss_corresponding[:, 1], color=cf.BLACK, label='source neuron', s=5)
             cf.plt_polygon(ax, xy=self.animal_info.coords_dict[split_area], color=cf.GRAY)
-        show_area_boundary(ax, animal=self.animal, dataset_key=self.dataset_key, show_area_name=False, text_fontsize=cf.FONT_SIZE/3, edgecolor=cf.BLACK)
+        plot_show_area_boundary(ax, animal=self.animal, dataset_key=self.dataset_key, show_area_name=False, text_fontsize=cf.FONT_SIZE/3, edgecolor=cf.BLACK)
 
-    def anterograde_neuron_by_pos(self, ax, pos, radius):
-        '''
-        显示一个pos内的ss的所有postsynaptic neuron
-        '''
-        ss = self.axon_growth_model.get_simulation_value('ss')
-        tt = self.axon_growth_model.get_simulation_value('tt')
+    def plot_anterograde_neuron_by_pos(self, ax, pos, radius):
+        ss = self.connection_model.get_simulation_value('ss')
+        tt = self.connection_model.get_simulation_value('tt')
 
         ss_pos_distance = np.linalg.norm(ss - pos, axis=1)
         in_circle_index = np.where(ss_pos_distance < radius)[0]
         tt_corresponding = tt[in_circle_index]
 
         cf.plt_scatter(ax, tt_corresponding[:, 0], tt_corresponding[:, 1], color=cf.BLACK, label='target neuron', s=5)
-        show_whole_cortex_boundary(ax, animal=self.animal, dataset_key=self.dataset_key, edgecolor=cf.BLACK)
+        plot_show_whole_cortex_boundary(ax, animal=self.animal, dataset_key=self.dataset_key, edgecolor=cf.BLACK)
 
         cf.add_circle_patch(ax, center=pos, radius=radius, edgecolor=cf.WHITE, facecolor=cf.WHITE)
 
-    def anterograde_neuron_by_area(self, ax, area):
-        '''
-        显示一个area的所有postsynaptic neuron
-        '''
-        tt = self.axon_growth_model.get_simulation_value('tt')
-        indices_ss = self.axon_growth_model.get_simulation_value('indices_ss')
-        
+    def plot_anterograde_neuron_by_area(self, ax, area):
+        tt = self.connection_model.get_simulation_value('tt')
+        indices_ss = self.connection_model.get_simulation_value('indices_ss')
+
         for split_area in self.animal_info.name_to_split_name_dict[area]:
-            # 找到indices_ss中为area的索引
+
             ss_indices_in_area_indices = np.where(indices_ss == split_area)[0]
             tt_corresponding = tt[ss_indices_in_area_indices]
 
             cf.plt_scatter(ax, tt_corresponding[:, 0], tt_corresponding[:, 1], color=cf.BLACK, label='target neuron', s=5)
             cf.plt_polygon(ax, xy=self.animal_info.coords_dict[split_area], color=cf.GRAY)
-        show_area_boundary(ax, animal=self.animal, dataset_key=self.dataset_key, show_area_name=False, text_fontsize=cf.FONT_SIZE/3, edgecolor=cf.BLACK)
+        plot_show_area_boundary(ax, animal=self.animal, dataset_key=self.dataset_key, show_area_name=False, text_fontsize=cf.FONT_SIZE/3, edgecolor=cf.BLACK)
 
-    def rm_longrange_correlation_change(self, ax, dim='2D', point_num=100, rm_mode='data'):
+    def plot_rm_longrange_correlation_change(self, ax, dim='2D', point_num=100, rm_mode='data'):
         if dim == '2D':
             distance_matrix = self.animal_info.distance_2D
         elif dim == '3D':
@@ -3594,17 +3125,17 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
 
         corr_list = get_rm_longrange_correlation_change(SC_data, SC_model, distance_matrix, self.animal, self.dataset_key, point_num=point_num, rm_mode=rm_mode)
         corr_list_logged_version = get_rm_longrange_correlation_change(SC_data_logged, SC_model_logged, distance_matrix, self.animal, self.dataset_key, point_num=point_num, rm_mode=rm_mode)
-        # cf.plt_line(ax, x=np.linspace(0, np.nanmax(distance_matrix.values), point_num), y=corr_list, color=cf.BLUE, label='Original')
-        # cf.plt_line(ax, x=np.linspace(0, np.nanmax(distance_matrix.values), point_num), y=corr_list_logged_version, color=cf.ORANGE, label='Logged')
+
+
         cf.plt_line(ax, x=np.linspace(0, np.nanmax(distance_matrix.values), point_num), y=corr_list_logged_version, color=cf.ORANGE)
-        cf.add_vline(ax, x=self.axon_growth_model.get_unique_Lambda() * 5, color=cf.RED, linestyle='--', label='$5\Lambda$')
-        cf.set_ax(ax, xlabel=f'Threshold (mm)', ylabel='Correlation', legend_loc='lower right')
+        cf.add_vline(ax, x=self.connection_model.get_unique_Lambda() * 5, color=cf.RED, linestyle='--', label=r'$5\Lambda$')
+        cf.set_ax(ax, xlabel='Threshold (mm)', ylabel='Correlation', legend_loc='lower right')
 
     def get_category_longrange_SC(self, dim='2D'):
-        results = get_category_longrange_connection(self.SC_data, self.animal, self.dataset_key, longrange_threshold=self.axon_growth_model.get_unique_Lambda() * 5, dim=dim)
+        results = get_category_longrange_connection(self.SC_data, self.animal, self.dataset_key, longrange_threshold=self.connection_model.get_unique_Lambda() * 5, dim=dim)
         return results
 
-    def category_long_range_SC(self, ax):
+    def plot_category_long_range_SC(self, ax):
         results = self.get_category_longrange_SC(dim='2D')
         longrange_connection_sum = results['longrange_connection_sum']
         area_category_in_order = get_area_category_in_order()
@@ -3612,12 +3143,12 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         cf.plt_bar(ax, range(len(area_category_in_order)), [longrange_connection_sum[c] for c in area_category_in_order])
         cf.set_ax(ax, ylabel='Long range sum', xtick=range(len(area_category_in_order)), xtick_label=area_category_in_order, xtick_rotation=90)
 
-    def injection_deviation_rate_performance_scatter(self, ax, performance_metric='correlation', mode='3D', diagonal=False):
+    def plot_injection_deviation_rate_performance_scatter(self, ax, performance_metric='correlation', mode='3D', diagonal=False):
         deviation_rate_dict = get_injection_deviation_rate(animal=self.animal, dataset_key=self.dataset_key, mode=mode)
         if performance_metric == 'correlation':
             if diagonal:
                 SCt_data = self.animal_info.SCt_data
-                SCt_model_masked = self.axon_growth_model.SC_model_dict[SC_type_to_SC_dict_key_include_diagonal(self.animal_info.SC_type)]
+                SCt_model_masked = self.connection_model.SC_model_dict[SC_type_to_SC_dict_key_include_diagonal(self.animal_info.SC_type)]
                 performance_dict = area_level_correlation(SC_data=SCt_data, SC_model=SCt_model_masked, animal=self.animal, dataset_key=self.dataset_key, diagonal=True)
             else:
                 performance_dict = area_level_correlation(SC_data=self.SC_data, SC_model=self.SC_model_masked, animal=self.animal, dataset_key=self.dataset_key, diagonal=False)
@@ -3627,13 +3158,13 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         cf.add_text(ax, x=deviation_rate_dict['A19M'], y=performance_dict['A19M'], text='A19M', va='bottom', ha='center', fontsize=cf.LABEL_SIZE*0.75, transform='data')
         cf.set_ax(ax, xlabel='Injection deviation level', ylabel=performance_metric)
 
-    def direction_preference_performance_scatter(self, ax, performance_metric='correlation', mode='uniform', diagonal=False):
+    def plot_direction_preference_performance_scatter(self, ax, performance_metric='correlation', mode='uniform', diagonal=False):
         if performance_metric == 'correlation':
             if diagonal:
                 SCt_data = self.animal_info.SCt_data
-                SCt_model_masked = self.axon_growth_model.SC_model_dict[SC_type_to_SC_dict_key_include_diagonal(self.animal_info.SC_type)]
+                SCt_model_masked = self.connection_model.SC_model_dict[SC_type_to_SC_dict_key_include_diagonal(self.animal_info.SC_type)]
                 performance_dict = area_level_correlation(SC_data=SCt_data, SC_model=SCt_model_masked, animal=self.animal, dataset_key=self.dataset_key, diagonal=True)
-                # direction_preference_dict = get_direction_preference(SCt_data, self.animal, self.dataset_key, mode=mode, SC_model=SCt_model_masked)
+
                 direction_preference_dict = get_direction_preference(self.SC_data, self.animal, self.dataset_key, mode=mode, SC_model=self.SC_model_masked)
             else:
                 performance_dict = area_level_correlation(SC_data=self.SC_data, SC_model=self.SC_model_masked, animal=self.animal, dataset_key=self.dataset_key, diagonal=False)
@@ -3643,7 +3174,7 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         cf.plt_linregress(ax, x, y, show_list=['p', 'r'], text_kwargs={'text_x': 0.02, 'text_y': 0.2}, text_size=cf.LABEL_SIZE*0.75)
         cf.set_ax(ax, xlabel='Direction preference', ylabel=performance_metric)
 
-    def twoD_threeD_distance_scatter(self, ax):
+    def plot_twoD_threeD_distance_scatter(self, ax):
         distance_2D = self.animal_info.distance_2D
         distance_3D = self.animal_info.distance_3D
         reordered_distance_3D = cf.reorder_df(distance_3D, new_row=distance_2D.index, new_col=distance_2D.columns)
@@ -3652,7 +3183,7 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         cf.plt_linregress(ax, x, y, show_list=['r'], scatter_mode='density', scatter_kwargs={'cbar_kwargs': {'ticks': []}}, text_size=cf.LABEL_SIZE*0.75, text_kwargs={'text_x': 0.05, 'text_y': 1.})
         cf.set_ax(ax, xlabel='Distance 3D (mm)', ylabel='Distance 2D (mm)')
 
-    def angle_distance_scatter(self, ax, n_neighbors):
+    def plot_angle_distance_scatter(self, ax, n_neighbors):
         mask = get_weight_category_mask(self.animal, self.dataset_key, diagonal=False)
         angle_matrix = self.animal_info.angle_2D
         distance_matrix = self.animal_info.distance_2D
@@ -3672,11 +3203,11 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
 
         cf.set_ax(ax, xlabel='Distance (mm)', ylabel='Angle')
 
-    def angle_distance_independence_with_distance_threshold(self, ax, distance_threshold_list, n_neighbors, plt_line_xlim=None):
+    def plot_angle_distance_independence_with_distance_threshold(self, ax, distance_threshold_list, n_neighbors, plt_line_xlim=None):
         mask = get_weight_category_mask(self.animal, self.dataset_key, diagonal=False)
         angle_matrix = self.animal_info.angle_2D
         distance_matrix = self.animal_info.distance_2D
-        
+
         independence_list = []
         for distance_threshold in distance_threshold_list:
             angle_list = []
@@ -3697,16 +3228,16 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         mutual_info_list = [result['mutual_info'] for result in independence_list]
 
         cf.plt_line(ax, x=distance_threshold_list, y=mutual_info_list, color=cf.BLACK, label='Mutual info', xlim=plt_line_xlim)
-        cf.add_vline(ax, x=self.axon_growth_model.get_unique_Lambda() * 5, color=cf.RED, linestyle='--', label='$5\Lambda$')
+        cf.add_vline(ax, x=self.connection_model.get_unique_Lambda() * 5, color=cf.RED, linestyle='--', label=r'$5\Lambda$')
         cf.set_ax(ax, xlabel='Threshold (mm)', ylabel='Mutual info', legend_loc='upper left')
 
-    def distance_relative_error(self, ax, dim='2D'):
+    def plot_distance_relative_error(self, ax, dim='2D'):
         if dim == '2D':
             distance_matrix = self.animal_info.distance_2D
         elif dim == '3D':
             distance_matrix = self.animal_info.distance_3D
-        
-        relative_error = self.axon_growth_model.get_relative_error()
+
+        relative_error = self.connection_model.get_relative_error()
         flatten_distance = []
         flatten_relative_error = []
         for source in self.animal_info.source_name:
@@ -3718,28 +3249,110 @@ class SingleCaseVisualizer(cf.SingleVisualizer):
         cf.set_ax(ax, xlabel=f'Distance {dim} (mm)', ylabel='Relative error', legend_loc='lower left', bbox_to_anchor=(0, 0.95))
 
 
-class MultiCaseVisualizer(cf.MultiVisualizerByCol):
-    '''
-    进行多个动物的可视化
-    '''
-    def __init__(self, animal_list, dataset_key_list, model_timedir_list):
+class MultiCaseVisualizer:
+    def __init__(self, animal_list, dataset_key_list, model_timedir_list, layout='column'):
         self.animal_list = animal_list
         self.dataset_key_list = dataset_key_list
         self.model_timedir_list = model_timedir_list
+        self.layout = layout
         self.animal_num = len(self.animal_list)
         self.animal_and_dataset_key_list = [cf.cat(animal, dataset_key) for animal, dataset_key in zip(self.animal_list, self.dataset_key_list)]
         self.single_visualizer_list = [SingleCaseVisualizer(animal, dataset_key, model_timedir) for animal, dataset_key, model_timedir in zip(self.animal_list, self.dataset_key_list, self.model_timedir_list)]
-        super().__init__(self.single_visualizer_list, fig_title_list=animal_list)
+        self.title_list = [visualizer.title for visualizer in self.single_visualizer_list]
+        self.fig_title_list = animal_list.copy()
+        self.save_fig_kwargs = {}
 
-@cf.tracker_with_time
+    @property
+    def num(self):
+        return len(self.single_visualizer_list)
+
+    def clone(self, layout=None):
+        cloned = copy.copy(self)
+        cloned.single_visualizer_list = self.single_visualizer_list.copy()
+        cloned.title_list = self.title_list.copy()
+        cloned.fig_title_list = self.fig_title_list.copy()
+        cloned.save_fig_kwargs = self.save_fig_kwargs.copy()
+        cloned.layout = layout or self.layout
+        return cloned
+
+    def update_save_fig_kwargs(self, save_fig_kwargs):
+        self.save_fig_kwargs = cf.update_dict(self.save_fig_kwargs, save_fig_kwargs)
+
+    def get_single_visualizer(self, title):
+        for visualizer in self.single_visualizer_list:
+            if visualizer.title == title:
+                return visualizer
+        raise KeyError(title)
+
+    @contextlib.contextmanager
+    def temporary_disable(self, titles):
+        state = (self.single_visualizer_list, self.title_list, self.fig_title_list)
+        keep = [i for i, title in enumerate(self.title_list) if title not in titles]
+        self.single_visualizer_list = [self.single_visualizer_list[i] for i in keep]
+        self.title_list = [self.title_list[i] for i in keep]
+        self.fig_title_list = [self.fig_title_list[i] for i in keep]
+        try:
+            yield
+        finally:
+            self.single_visualizer_list, self.title_list, self.fig_title_list = state
+
+    def get_fig_subfig_ax(self, subfig_nrows=None, subfig_ncols=None, separate=False, get_suitable_fig_size_kwargs=None, get_fig_subfig_kwargs=None, get_ax_kwargs=None):
+        if separate:
+            raise NotImplementedError('Separate figures are not used by this project.')
+        if subfig_nrows is None and subfig_ncols is None:
+            if self.layout == 'row':
+                subfig_nrows, subfig_ncols = self.num, 1
+            else:
+                subfig_nrows, subfig_ncols = 1, self.num
+        elif subfig_nrows is None:
+            subfig_nrows = int(np.ceil(self.num / subfig_ncols))
+        elif subfig_ncols is None:
+            subfig_ncols = int(np.ceil(self.num / subfig_nrows))
+        get_suitable_fig_size_kwargs = cf.update_dict({}, get_suitable_fig_size_kwargs)
+        get_fig_subfig_kwargs = cf.update_dict({}, get_fig_subfig_kwargs)
+        get_ax_kwargs = cf.update_dict({}, get_ax_kwargs)
+        width, height = cf.get_suitable_fig_size(**get_suitable_fig_size_kwargs)
+        self.fig = plt.figure(figsize=(width * subfig_ncols, height * subfig_nrows), dpi=cf.FIG_DPI)
+        subfigures = self.fig.subfigures(subfig_nrows, subfig_ncols, squeeze=False, **get_fig_subfig_kwargs)
+        subfigures = np.asarray(subfigures, dtype=object).flatten()
+        self.subfig_dict = {}
+        self.ax_dict = {}
+        for i, title in enumerate(self.title_list):
+            subfig = subfigures[i]
+            self.subfig_dict[title] = subfig
+            self.ax_dict[title] = cf.get_ax(fig=subfig, **get_ax_kwargs)
+        self.separate = False
+        return self.subfig_dict, self.ax_dict
+
+    def multi_ax_plot_by_single_visualizer(self, method_name, kwargs_list):
+        for visualizer, kwargs in zip(self.single_visualizer_list, kwargs_list):
+            getattr(visualizer, method_name)(**kwargs)
+
+    def add_tag(self, row_first=True, **kwargs):
+        axes = [list(np.asarray(self.ax_dict[title], dtype=object).reshape(-1)) for title in self.title_list]
+        if row_first and self.layout == 'column':
+            ordered = [ax for row in zip(*axes) for ax in row]
+        else:
+            ordered = [ax for group in axes for ax in group]
+        cf.add_axes_list_tag_by_order(ordered, **kwargs)
+
+    def add_subfig_title(self, y=0.98, **kwargs):
+        for title, figure_title in zip(self.title_list, self.fig_title_list):
+            self.subfig_dict[title].suptitle(cf.format_text(figure_title), y=y, fontsize=cf.SUP_TITLE_SIZE, **kwargs)
+
+    def save_fig(self, filename):
+        cf.save_fig(self.fig, filename, **self.save_fig_kwargs)
+
 class PaperFig:
-    def __init__(self, model_timedir_list, marmoset_V4_timedir):
+    def __init__(self, model_timedir_list, marmoset_V4_timedir, output_dir=None):
         self.animal_list = ['mouse', 'marmoset', 'macaque', 'human']
         self.dataset_key_list = ['gamanut', 'majka', 'markov40', 'lariviere']
         self.animal_num = len(self.animal_list)
         self.model_timedir_list = model_timedir_list
         self.multi_visualizer = MultiCaseVisualizer(self.animal_list, self.dataset_key_list, self.model_timedir_list)
-        self.figdir = '../../results/figs'
+        if output_dir is None:
+            output_dir = Path(__file__).resolve().parents[2] / 'results' / 'figures'
+        self.figdir = str(output_dir)
         self._check_figdir = cf.pj(self.figdir, 'check_fig')
         self.formats = [cf.SAVEFIG_RASTER_FORMAT, cf.SAVEFIG_FORMAT]
         self.bbox_inches = 'tight'
@@ -3747,10 +3360,48 @@ class PaperFig:
         self.multi_visualizer.update_save_fig_kwargs(self.save_fig_kwargs)
         self.marmoset_V4_timedir = marmoset_V4_timedir
 
-    def fig_1(self):
-        '''
-        生成模型示意图
-        '''
+    def plot_all(self):
+        plot_methods = [
+            self.plot_connection_generation_method_overview,
+            self.plot_cross_species_connectivity_fit,
+            self.plot_direction_distribution_comparison,
+            self.plot_marmoset_connection_statistics,
+            self.plot_long_range_connection_analysis,
+            self.plot_cross_species_scaling,
+            self.plot_distance_2d_3d_and_edr,
+            self.plot_angle_distance_dependence,
+            self.plot_marmoset_atlas_comparison,
+            self.plot_connection_statistics_other_species,
+            self.plot_marmoset_area_performance_and_retrograde,
+            self.plot_area_performance_all_species,
+            self.plot_distance_relative_error,
+            self.plot_angle_uniformity_by_distance_threshold,
+            self.plot_marmoset_direction_and_injection_bias,
+            self.plot_direction_preference_performance,
+        ]
+        for plot_method in plot_methods:
+            plot_method()
+        reference_mapping = {
+            'fig_1.pdf': 'connection_generation_method_overview',
+            'fig_2.pdf': 'cross_species_connectivity_fit',
+            'fig_3.pdf': 'direction_distribution_comparison',
+            'fig_4.pdf': 'marmoset_connection_statistics',
+            'fig_5.pdf': 'long_range_connection_analysis',
+            'fig_6.pdf': 'cross_species_scaling',
+            'SI_fig_1.pdf': 'distance_2d_3d_and_edr',
+            'SI_fig_2.pdf': 'angle_distance_dependence',
+            'SI_fig_3.pdf': 'marmoset_atlas_comparison',
+            'SI_fig_4.pdf': 'connection_statistics_other_species',
+            'SI_fig_5.pdf': 'marmoset_area_performance_and_retrograde',
+            'SI_fig_6.pdf': 'area_performance_all_species',
+            'SI_fig_7.pdf': 'distance_relative_error',
+            'SI_fig_8.pdf': 'angle_uniformity_by_distance_threshold',
+            'SI_fig_10.pdf': 'marmoset_direction_and_injection_bias',
+            'SI_fig_11.pdf': 'direction_preference_performance',
+        }
+        save_json(reference_mapping, Path(self.figdir) / 'reference_mapping.json')
+
+    def plot_connection_generation_method_overview(self):
         animal = 'marmoset'
         dataset_key = 'majka'
         animal_info = AnimalInfo(animal, dataset_key)
@@ -3782,27 +3433,27 @@ class PaperFig:
 
         ax = ax_dict['a']
         cf.set_ax(ax, title='Cortical surface')
-        show_whole_cortex_boundary(ax, animal, dataset_key)
+        plot_show_whole_cortex_boundary(ax, animal, dataset_key)
 
         ax = ax_dict['b']
         cf.set_ax(ax, title='Neuron generation')
-        show_whole_cortex_boundary(ax, animal, dataset_key)
+        plot_show_whole_cortex_boundary(ax, animal, dataset_key)
         s = cf.get_suitable_s(ax, num=int(point_density*whole_cortex_polygon.area)) / 10
         for area, polygon in polygon_dict.items():
-            points = generate_random_point_in_polygon(polygon, density=point_density, seed=0)
+            points = get_random_points_in_polygon(polygon, density=point_density, seed=0)
             cf.plt_scatter(ax, points[:, 0], points[:, 1], color=cf.RYO, s=s, zorder=-1, alpha=0.5)
 
         ax = ax_dict['c']
         cf.set_ax(ax, title='Connection generation methodology')
-        cf.add_text(ax, text='$\\theta \sim \mathrm{Uniform}(-\pi, \pi)$', x=0.5, y=0., va='center', ha='center', fontsize=cf.LABEL_SIZE)
-        cf.add_text(ax, text='$d \sim \mathrm{Exponential}(\\Lambda)$', x=0.5, y=-0.08, va='center', ha='center', fontsize=cf.LABEL_SIZE, text_process={'capitalize': False})
-        show_whole_cortex_boundary(ax, animal, dataset_key)
+        cf.add_text(ax, text=r'$\theta \sim \mathrm{Uniform}(-\pi, \pi)$', x=0.5, y=0., va='center', ha='center', fontsize=cf.LABEL_SIZE)
+        cf.add_text(ax, text=r'$d \sim \mathrm{Exponential}(\Lambda)$', x=0.5, y=-0.08, va='center', ha='center', fontsize=cf.LABEL_SIZE, text_process={'capitalize': False})
+        plot_show_whole_cortex_boundary(ax, animal, dataset_key)
 
         s = cf.get_suitable_s(ax, num=int(point_density*whole_cortex_polygon.area)) / 10
         for area, polygon in polygon_dict.items():
-            points = generate_random_point_in_polygon(polygon, density=point_density, seed=0)
+            points = get_random_points_in_polygon(polygon, density=point_density, seed=0)
             cf.plt_scatter(ax, points[:, 0], points[:, 1], color=cf.RYO, s=s, zorder=-1, alpha=0.5)
-        
+
         for source_point, angle, distance in zip([[-8.2,  1.6]], [45 / (180) * np.pi], [Lambda * 5]):
             target_point = source_point + np.array([np.cos(angle) * distance, np.sin(angle) * distance])
             cf.plt_scatter(ax, [source_point[0]], [source_point[1]], color=cf.CRIMSON, s=50, zorder=1)
@@ -3814,42 +3465,38 @@ class PaperFig:
 
         ax = ax_dict['d']
         cf.set_ax(ax, title='Connection generation')
-        show_whole_cortex_boundary(ax, animal, dataset_key)
+        plot_show_whole_cortex_boundary(ax, animal, dataset_key)
         for source_point, angle, distance in zip([[-8.2,  1.6], [4., 3.5], [-5., 3.], [6.7, 2.5], [-13, 5.], [9.8, 6.], [10.5, 7.], [7., -4.], [0., -5.]], [45 / (180) * np.pi, 230 / (180) * np.pi, 270 / (180) * np.pi, 315 / (180) * np.pi, 10 / (180) * np.pi, 170 / (180) * np.pi, 120 / (180) * np.pi, -10 / (180) * np.pi, -30 / (180) * np.pi], [Lambda * 5, Lambda * 3, Lambda * 7, Lambda * 4, Lambda * 1.5, Lambda * 2.5, Lambda * 1.8, Lambda * 2.9, Lambda * 2.2]):
             target_point = source_point + np.array([np.cos(angle) * distance, np.sin(angle) * distance])
             cf.add_arrow(ax, x_start=source_point[0], y_start=source_point[1], x_end=target_point[0], y_end=target_point[1], fc=cf.CRIMSON, ec=cf.CRIMSON)
 
         s = cf.get_suitable_s(ax, num=int(point_density*whole_cortex_polygon.area)) / 10
         for area, polygon in polygon_dict.items():
-            points = generate_random_point_in_polygon(polygon, density=point_density, seed=0)
+            points = get_random_points_in_polygon(polygon, density=point_density, seed=0)
             cf.plt_scatter(ax, points[:, 0], points[:, 1], color=cf.RYO, s=s, zorder=-1, alpha=0.5)
-        
+
         ax = ax_dict['e']
         cf.set_ax(ax, title='Atlas registration')
-        show_area_boundary(ax, animal, dataset_key)
+        plot_show_area_boundary(ax, animal, dataset_key)
         for source_point, angle, distance in zip([[-8.2,  1.6], [4., 3.5], [-5., 3.], [6.7, 2.5], [-13, 5.], [9.8, 6.], [10.5, 7.], [7., -4.], [0., -5.]], [45 / (180) * np.pi, 230 / (180) * np.pi, 270 / (180) * np.pi, 315 / (180) * np.pi, 10 / (180) * np.pi, 170 / (180) * np.pi, 120 / (180) * np.pi, -10 / (180) * np.pi, -30 / (180) * np.pi], [Lambda * 5, Lambda * 3, Lambda * 7, Lambda * 4, Lambda * 1.5, Lambda * 2.5, Lambda * 1.8, Lambda * 2.9, Lambda * 2.2]):
             target_point = source_point + np.array([np.cos(angle) * distance, np.sin(angle) * distance])
             cf.add_arrow(ax, x_start=source_point[0], y_start=source_point[1], x_end=target_point[0], y_end=target_point[1], fc=cf.CRIMSON, ec=cf.CRIMSON)
         s = cf.get_suitable_s(ax, num=int(point_density*whole_cortex_polygon.area)) / 10
         for area, polygon in polygon_dict.items():
-            points = generate_random_point_in_polygon(polygon, density=point_density, seed=0)
+            points = get_random_points_in_polygon(polygon, density=point_density, seed=0)
             cf.plt_scatter(ax, points[:, 0], points[:, 1], color=cf.RYO, s=s, zorder=-1, alpha=0.5)
-        
+
         ax_model = ax_dict['f']
         single_visualizer = self.multi_visualizer.get_single_visualizer(cf.cat(animal, dataset_key))
         selected_target_area_list = animal_info.source_name
-        single_visualizer.connection_by_arrows_on_flatmap(ax=ax_model, data_or_model='model', selected_target_area_list=selected_target_area_list)
+        single_visualizer.plot_connection_by_arrows_on_flatmap(ax=ax_model, data_or_model='model', selected_target_area_list=selected_target_area_list)
         ax_model.set_title('Area level connection')
 
-        cf.save_fig(fig, self.figdir+'/fig_1', **self.save_fig_kwargs)
+        cf.save_fig(fig, self.figdir+'/connection_generation_method_overview', **self.save_fig_kwargs)
 
-    def fig_2(self):
-        '''
-        连接矩阵
-        accuracy in category & correlation
-        '''
+    def plot_cross_species_connectivity_fit(self):
         fig, axes = cf.get_fig_ax(nrows=3, ncols=self.animal_num)
-        
+
         for i in range(self.animal_num):
             animal = self.animal_list[i]
             dataset_key = self.dataset_key_list[i]
@@ -3857,9 +3504,9 @@ class PaperFig:
 
             ax_data = axes[0, i]
             ax_model = axes[1, i]
-            single_visualizer.data_model_SC(ax_data=ax_data, ax_model=ax_model)
+            single_visualizer.plot_data_model_SC(ax_data=ax_data, ax_model=ax_model)
             cf.add_axes_title(ax_data, title=animal, title_size=cf.SUP_TITLE_SIZE)
-        
+
         merged_ax = cf.merge_ax(axes[2, :])
         performance_dict = {}
         processed_performance_dict = {}
@@ -3869,12 +3516,12 @@ class PaperFig:
             animal_and_dataset_key = single_visualizer.animal_info.animal_and_dataset_key
             performance_dict[animal_and_dataset_key] = get_performance_dict(SC_data=single_visualizer.SC_data, SC_model=single_visualizer.SC_model_masked, animal=animal, dataset_key=dataset_key, diagonal=False)
             processed_performance_dict[animal_and_dataset_key] = performance_dict[animal_and_dataset_key].copy()
-            processed_performance_dict[animal_and_dataset_key].pop('correlation', None) # not show in Fig, but shown in main text
-            processed_performance_dict[animal_and_dataset_key].pop('accuracy_all', None) # not show in Fig, but shown in main text
-            processed_performance_dict[animal_and_dataset_key].pop('accuracy_non', None) # not show in Fig, but shown in main text
-            processed_performance_dict[animal_and_dataset_key].pop('accuracy_both', None) # not show in Fig, but shown in main text
+            processed_performance_dict[animal_and_dataset_key].pop('correlation', None)
+            processed_performance_dict[animal_and_dataset_key].pop('accuracy_all', None)
+            processed_performance_dict[animal_and_dataset_key].pop('accuracy_non', None)
+            processed_performance_dict[animal_and_dataset_key].pop('accuracy_both', None)
 
-        # 重命名,去掉所有accuracy前缀
+
         for animal_and_dataset_key in processed_performance_dict.keys():
             new_dict = {}
             for key, value in processed_performance_dict[animal_and_dataset_key].items():
@@ -3884,7 +3531,7 @@ class PaperFig:
                     new_key = key
                 new_dict[new_key] = value
             processed_performance_dict[animal_and_dataset_key] = new_dict
-        
+
         ax = merged_ax
         cf.plt_group_bar_dict(ax, processed_performance_dict, width=0.05)
         cf.set_ax(ax, xtick=range(len(self.animal_list)), xtick_label=self.animal_list, ylim=[0, 1], legend_kwargs={'ncols': 6}, legend_loc='lower right', bbox_to_anchor=(1, 1), xtick_size=cf.TITLE_SIZE*1.2, adjust_tick_size=False, legend_size=cf.TITLE_SIZE, ylabel='Performance', label_size=cf.TITLE_SIZE*1.2, ytick_size=cf.LABEL_SIZE)
@@ -3895,7 +3542,7 @@ class PaperFig:
         axes_list_in_order.append(axes[2, 0])
         cf.add_axes_list_tag_by_order(axes_list_in_order)
 
-        cf.save_fig(fig, self.figdir+'/fig_2', **self.save_fig_kwargs)
+        cf.save_fig(fig, self.figdir+'/cross_species_connectivity_fit', **self.save_fig_kwargs)
         cf.save_dict(performance_dict, self.figdir+'/fig_2_performance_dict')
 
         RMAE_dict = copy.deepcopy(performance_dict)
@@ -3909,10 +3556,7 @@ class PaperFig:
                     pass
         cf.save_dict(RMAE_dict, self.figdir+'/fig_2_RMAE_dict')
 
-    def fig_3(self):
-        '''
-        UAR,2D and 3D
-        '''
+    def plot_direction_distribution_comparison(self):
         get_ax_kwargs = {'nrows': 3}
         get_suitable_fig_size_kwargs = {'nrows': 3, 'which': 'adjust_params_custom'}
         fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_fig_size_kwargs)
@@ -3921,8 +3565,8 @@ class PaperFig:
         for title, ax in ax_dict.items():
             angle_kwargs_list.append({'ax': ax[0], 'dim': '2D'})
             angle_3D_kwargs_list.append({'ax': ax[1:], 'dim': '3D'})
-        self.multi_visualizer.multi_ax_plot_by_single_visualizer('data_uniform_angle_distribution', angle_kwargs_list)
-        self.multi_visualizer.multi_ax_plot_by_single_visualizer('data_model_angle_distribution', angle_3D_kwargs_list)
+        self.multi_visualizer.multi_ax_plot_by_single_visualizer('plot_data_uniform_angle_distribution', angle_kwargs_list)
+        self.multi_visualizer.multi_ax_plot_by_single_visualizer('plot_data_model_angle_distribution', angle_3D_kwargs_list)
 
         for title, ax in ax_dict.items():
             cf.plt_bar(ax[1], [0], [0], label='Data', color=DATA_COLOR)
@@ -3933,13 +3577,10 @@ class PaperFig:
 
         self.multi_visualizer.add_tag(row_first=False, ref_ax=ax_dict[cf.cat(self.animal_list[0], self.dataset_key_list[0])][0])
         self.multi_visualizer.add_subfig_title()
-        # self.multi_visualizer.rm_redundant_xylabel()
-        self.multi_visualizer.save_fig(self.figdir+'/fig_3')
 
-    def fig_4(self):
-        '''
-        marmoset connection statistics
-        '''
+        self.multi_visualizer.save_fig(self.figdir+'/direction_distribution_comparison')
+
+    def plot_marmoset_connection_statistics(self):
         animal = 'marmoset'
         dataset_key = 'majka'
         animal_info = AnimalInfo(animal, dataset_key)
@@ -3959,35 +3600,32 @@ class PaperFig:
         cf.add_axes_dict_tag(axes_dict=ax_dict, ref_ax=ax[0, 0])
 
         ax = ax_dict['a']
-        single_visualizer.intrinsic_proportion(ax)
+        single_visualizer.plot_intrinsic_proportion(ax)
 
         ax = ax_dict['b']
-        single_visualizer.SC_distribution(ax, data_or_model='data', log_scale=True)
+        single_visualizer.plot_SC_distribution(ax, data_or_model='data', log_scale=True)
 
         ax = ax_dict['c']
-        single_visualizer.SC_distribution(ax, data_or_model='model', log_scale=True)
-        # ax.set_ylabel('')
+        single_visualizer.plot_SC_distribution(ax, data_or_model='model', log_scale=True)
+
 
         ax = ax_dict['d']
-        single_visualizer.distance_SC_scatter(ax, data_or_model='data', dim='2D')
+        single_visualizer.plot_distance_SC_scatter(ax, data_or_model='data', dim='2D')
 
         ax = ax_dict['e']
-        single_visualizer.distance_SC_scatter(ax, data_or_model='model', dim='2D')
-        # ax.set_ylabel('')
+        single_visualizer.plot_distance_SC_scatter(ax, data_or_model='model', dim='2D')
+
 
         ax = ax_dict['f']
-        single_visualizer.distance_distribution(ax, data_or_model='data', dim='2D')
+        single_visualizer.plot_distance_distribution(ax, data_or_model='data', dim='2D')
 
         ax = ax_dict['g']
-        single_visualizer.distance_distribution(ax, data_or_model='model', dim='2D')
-        # ax.set_ylabel('')
+        single_visualizer.plot_distance_distribution(ax, data_or_model='model', dim='2D')
 
-        cf.save_fig(fig, self.figdir+'/fig_4', **self.save_fig_kwargs)
 
-    def fig_5(self):
-        '''
-        marmoset area level performance and retrograde
-        '''
+        cf.save_fig(fig, self.figdir+'/marmoset_connection_statistics', **self.save_fig_kwargs)
+
+    def plot_marmoset_area_performance_and_retrograde(self):
         animal = 'marmoset'
         dataset_key = 'majka'
         animal_info = AnimalInfo(animal, dataset_key)
@@ -3999,6 +3637,8 @@ class PaperFig:
         margin['top'] += 0.05
         margin['bottom'] -= 0.05
         fig, ax = cf.get_fig_ax(nrows=2, ncols=4, margin=margin)
+        fig.set_figwidth(fig.get_figwidth() * 0.928435)
+        fig.set_figheight(fig.get_figheight() * 1.002763)
 
         ax_dict = {}
         ax_dict['a'] = cf.merge_ax(ax[0, 0:2])
@@ -4018,42 +3658,36 @@ class PaperFig:
         cf.add_axes_dict_tag(axes_dict=ax_dict, ref_ax=ax[0, 0])
 
         ax = ax_dict['a']
-        single_visualizer.area_level_performance(ax, performance_metric='correlation', sort=True)
+        single_visualizer.plot_area_level_performance(ax, performance_metric='correlation', sort=True)
         cf.set_ax(ax, ylabel='Correlation (FLNe)', ylim=[-0.2, 1.2], xtick_rotation=90)
 
         ax = ax_dict['b']
-        single_visualizer.area_level_performance(ax, performance_metric='correlation', sort=True, SC_data=animal_info.SCt_data, SC_model=single_visualizer.axon_growth_model.SC_model_dict['FLNt'], diagonal=True)
+        single_visualizer.plot_area_level_performance(ax, performance_metric='correlation', sort=True, SC_data=animal_info.SCt_data, SC_model=single_visualizer.connection_model.SC_model_dict['FLNt'], diagonal=True)
         cf.set_ax(ax, ylabel='Correlation (FLNt)', ylim=[-0.2, 1.2], xtick_rotation=90)
 
         ax = ax_dict['c']
-        single_visualizer.connection_on_flatmap(ax, data_or_model='data', which_area='A1-2', show_value_on_flatmap_kwargs={'cbar': False})
+        single_visualizer.plot_connection_on_flatmap(ax, data_or_model='data', which_area='A1-2', show_value_on_flatmap_kwargs={'cbar': False})
 
         ax = ax_dict['d']
-        single_visualizer.connection_on_flatmap(ax, data_or_model='model', which_area='A1-2')
+        single_visualizer.plot_connection_on_flatmap(ax, data_or_model='model', which_area='A1-2')
 
         pos = animal_info.injection_site_2D['A1-2'][0]
         radius = 0.4
-        
-        ax = ax_dict['e']
-        # CJ173-FB
-        cf.rm_ax_axis(ax)
-        # show_whole_cortex_boundary(ax, animal=animal, dataset_key=dataset_key, edgecolor=cf.BLACK)
-        show_area_boundary(ax, animal=animal, dataset_key=dataset_key, show_area_name=False, edgecolor=cf.BLACK)
 
+        ax = ax_dict['e']
+        cf.rm_ax_axis(ax)
+        plot_show_area_boundary(ax, animal=animal, dataset_key=dataset_key, show_area_name=False, edgecolor=cf.BLACK)
         cf.add_circle_patch(ax, center=pos, radius=radius, edgecolor=cf.RED, facecolor=cf.RED)
 
         ax = ax_dict['f']
         cf.rm_ax_axis(ax)
-        single_visualizer.retrograde_neuron_by_pos(ax, pos, radius)
+        single_visualizer.plot_retrograde_neuron_by_pos(ax, pos, radius)
 
         local_save_fig_kwargs = self.save_fig_kwargs.copy()
         local_save_fig_kwargs['bbox_inches'] = 'tight'
-        cf.save_fig(fig, self.figdir+'/fig_5', **local_save_fig_kwargs)
+        cf.save_fig(fig, self.figdir+'/marmoset_area_performance_and_retrograde', **local_save_fig_kwargs)
 
-    def fig_6(self):
-        '''
-        distance analysis
-        '''
+    def plot_combined_long_range_analysis(self):
         get_ax_kwargs = {'nrows': 3}
         get_suitable_fig_size_kwargs = {'nrows': 3, 'which': 'adjust_params_custom'}
         fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_fig_size_kwargs)
@@ -4065,20 +3699,17 @@ class PaperFig:
             distance_threshold_list = np.linspace(0, np.nanmax(self.multi_visualizer.get_single_visualizer(title).animal_info.distance_2D.values), 40)[:-2]
             data_angle_uniform_index_with_distance_threshold_kwargs_list.append({'ax': ax[1], 'distance_threshold_list': distance_threshold_list})
             category_longrange_SC_kwargs_list.append({'ax': ax[2]})
-        self.multi_visualizer.multi_ax_plot_by_single_visualizer('rm_longrange_correlation_change', rm_longrange_kwargs_list)
-        self.multi_visualizer.multi_ax_plot_by_single_visualizer('category_long_range_SC', category_longrange_SC_kwargs_list)
-        self.multi_visualizer.multi_ax_plot_by_single_visualizer('data_angle_uniform_index_with_distance_threshold', data_angle_uniform_index_with_distance_threshold_kwargs_list)
+        self.multi_visualizer.multi_ax_plot_by_single_visualizer('plot_rm_longrange_correlation_change', rm_longrange_kwargs_list)
+        self.multi_visualizer.multi_ax_plot_by_single_visualizer('plot_category_long_range_SC', category_longrange_SC_kwargs_list)
+        self.multi_visualizer.multi_ax_plot_by_single_visualizer('plot_data_angle_uniform_index_with_distance_threshold', data_angle_uniform_index_with_distance_threshold_kwargs_list)
         for title, ax in ax_dict.items():
             ax[1].set_xlim(ax[0].get_xlim())
         self.multi_visualizer.add_tag(row_first=False)
         self.multi_visualizer.add_subfig_title(y=1.05)
-        # self.multi_visualizer.rm_redundant_xylabel()
-        self.multi_visualizer.save_fig(self.figdir+'/fig_6')
 
-    def distance_analysis_fig(self):
-        '''
-        distance analysis
-        '''
+        self.multi_visualizer.save_fig(self.figdir+'/combined_long_range_analysis')
+
+    def plot_long_range_connection_analysis(self):
         get_ax_kwargs = {'nrows': 2}
         get_suitable_fig_size_kwargs = {'nrows': 2, 'which': 'adjust_params_custom'}
         fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_fig_size_kwargs)
@@ -4087,16 +3718,13 @@ class PaperFig:
         for title, ax in ax_dict.items():
             rm_longrange_kwargs_list.append({'ax': ax[0], 'dim': '2D'})
             category_longrange_SC_kwargs_list.append({'ax': ax[1]})
-        self.multi_visualizer.multi_ax_plot_by_single_visualizer('rm_longrange_correlation_change', rm_longrange_kwargs_list)
-        self.multi_visualizer.multi_ax_plot_by_single_visualizer('category_long_range_SC', category_longrange_SC_kwargs_list)
+        self.multi_visualizer.multi_ax_plot_by_single_visualizer('plot_rm_longrange_correlation_change', rm_longrange_kwargs_list)
+        self.multi_visualizer.multi_ax_plot_by_single_visualizer('plot_category_long_range_SC', category_longrange_SC_kwargs_list)
         self.multi_visualizer.add_tag(row_first=False)
         self.multi_visualizer.add_subfig_title(y=1.05)
-        self.multi_visualizer.save_fig(self.figdir+'/distance_analysis_fig')
+        self.multi_visualizer.save_fig(self.figdir+'/long_range_connection_analysis')
 
-    def angle_uniformity_fig(self):
-        '''
-        distance analysis
-        '''
+    def plot_angle_uniformity_by_distance_threshold(self):
         get_ax_kwargs = {'nrows': 1}
         get_suitable_fig_size_kwargs = {'nrows': 1, 'which': 'adjust_params_custom'}
         fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_fig_size_kwargs)
@@ -4104,16 +3732,13 @@ class PaperFig:
         for title, ax in ax_dict.items():
             distance_threshold_list = np.linspace(0, np.nanmax(self.multi_visualizer.get_single_visualizer(title).animal_info.distance_2D.values), 40)[:-2]
             data_angle_uniform_index_with_distance_threshold_kwargs_list.append({'ax': ax, 'distance_threshold_list': distance_threshold_list})
-        self.multi_visualizer.multi_ax_plot_by_single_visualizer('data_angle_uniform_index_with_distance_threshold', data_angle_uniform_index_with_distance_threshold_kwargs_list)
+        self.multi_visualizer.multi_ax_plot_by_single_visualizer('plot_data_angle_uniform_index_with_distance_threshold', data_angle_uniform_index_with_distance_threshold_kwargs_list)
         self.multi_visualizer.add_tag(row_first=False)
         self.multi_visualizer.add_subfig_title(y=1.05)
-        # self.multi_visualizer.rm_redundant_xylabel()
-        self.multi_visualizer.save_fig(self.figdir+'/angle_uniformity_fig')
 
-    def fig_7(self):
-        '''
-        cross species
-        '''
+        self.multi_visualizer.save_fig(self.figdir+'/angle_uniformity_by_distance_threshold')
+
+    def plot_cross_species_scaling(self):
         fig, axes = cf.get_fig_ax(ncols=3)
 
         ax_dict = {}
@@ -4122,24 +3747,21 @@ class PaperFig:
         ax_dict['c'] = axes[2]
 
         ax = ax_dict['a']
-        visualize_scaling_law(ax, self.multi_visualizer.single_visualizer_list, dim='2D')
+        plot_visualize_scaling_law(ax, self.multi_visualizer.single_visualizer_list, dim='2D')
 
         ax = ax_dict['b']
-        visualize_longrange_proportion_correlation_heatmap(ax, self.multi_visualizer.single_visualizer_list, dim='2D')
+        plot_visualize_longrange_proportion_correlation_heatmap(ax, self.multi_visualizer.single_visualizer_list, dim='2D')
 
         ax = ax_dict['c']
-        macaque_performance_dict = self.multi_visualizer.get_single_visualizer('macaque_markov40').axon_growth_model.get_area_level_correlation()
-        marmoset_performance_dict = self.multi_visualizer.get_single_visualizer('marmoset_majka').axon_growth_model.get_area_level_correlation()
-        visualize_macaque_marmoset_performance_similarity(ax, macaque_performance_dict, marmoset_performance_dict)
+        macaque_performance_dict = self.multi_visualizer.get_single_visualizer('macaque_markov40').connection_model.get_area_level_correlation()
+        marmoset_performance_dict = self.multi_visualizer.get_single_visualizer('marmoset_majka').connection_model.get_area_level_correlation()
+        plot_visualize_macaque_marmoset_performance_similarity(ax, macaque_performance_dict, marmoset_performance_dict)
 
         cf.add_axes_dict_tag(axes_dict=ax_dict, ref_ax=axes[0])
 
-        cf.save_fig(fig, self.figdir+'/fig_7', **self.save_fig_kwargs)
+        cf.save_fig(fig, self.figdir+'/cross_species_scaling', **self.save_fig_kwargs)
 
-    def fig_8(self):
-        '''
-        marmoset direction preference & skewness
-        '''
+    def plot_marmoset_direction_and_injection_bias(self):
         single_visualizer = self.multi_visualizer.get_single_visualizer('marmoset_majka')
         fig, axes = cf.get_fig_ax(ncols=3)
 
@@ -4149,14 +3771,14 @@ class PaperFig:
         ax_dict['c'] = axes[2]
 
         ax = ax_dict['a']
-        # single_visualizer.direction_preference_performance_scatter(ax, performance_metric='correlation', mode='uniform', diagonal=False)
-        single_visualizer.direction_preference_performance_scatter(ax, performance_metric='correlation', mode='uniform', diagonal=True)
+
+        single_visualizer.plot_direction_preference_performance_scatter(ax, performance_metric='correlation', mode='uniform', diagonal=True)
         cf.move_ax(ax, d_right=0.06, keep_size=True)
 
         ax = ax_dict['b']
         which_area = 'A19M'
-        # which_area = 'TPO'
-        single_visualizer.connection_on_flatmap(ax, data_or_model='data', which_area=which_area)
+
+        single_visualizer.plot_connection_on_flatmap(ax, data_or_model='data', which_area=which_area)
         cf.add_text(ax, text=which_area, x=0.5, y=-0.15, ha='center', va='center', fontsize=cf.LABEL_SIZE)
 
         injection_site = single_visualizer.animal_info.injection_site_2D
@@ -4164,39 +3786,33 @@ class PaperFig:
         injection_y = injection_site[which_area][0][1]
         cf.plt_scatter(ax, injection_x, injection_y, color=cf.YELLOW, label='Injection site', s=50)
         cf.set_ax(ax, xlim=[injection_x-5, injection_x+5], ylim=[injection_y-5, injection_y+5])
-        # cf.set_ax(ax, xlim=[injection_x-8, injection_x+8], ylim=[injection_y-8, injection_y+8])
+
 
         ax = ax_dict['c']
-        single_visualizer.injection_deviation_rate_performance_scatter(ax, performance_metric='correlation', mode='3D', diagonal=True)
+        single_visualizer.plot_injection_deviation_rate_performance_scatter(ax, performance_metric='correlation', mode='3D', diagonal=True)
 
         cf.add_axes_dict_tag(axes_dict=ax_dict, ref_ax=axes[0])
 
-        cf.save_fig(fig, self.figdir+'/fig_8', **self.save_fig_kwargs)
+        cf.save_fig(fig, self.figdir+'/marmoset_direction_and_injection_bias', **self.save_fig_kwargs)
 
-    def SI_fig_1(self):
-        '''
-        2D & 3D distance
-        2D EDR
-        '''
+    def plot_distance_2d_3d_and_edr(self):
         get_ax_kwargs = {'nrows': 2}
         get_suitable_fig_size_kwargs = {'nrows': 2, 'which': 'adjust_params_custom'}
         fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_fig_size_kwargs)
+        self.multi_visualizer.fig.set_figwidth(self.multi_visualizer.fig.get_figwidth() * 0.996686)
         twoD_threeD_distance_scatter_kwargs_list = []
         distance_kwargs_list = []
         for title, ax in ax_dict.items():
             twoD_threeD_distance_scatter_kwargs_list.append({'ax': ax[0]})
             distance_kwargs_list.append({'ax': ax[1], 'data_or_model': 'data', 'dim': '2D', 'linregress': True})
-        self.multi_visualizer.multi_ax_plot_by_single_visualizer('twoD_threeD_distance_scatter', twoD_threeD_distance_scatter_kwargs_list)
-        self.multi_visualizer.multi_ax_plot_by_single_visualizer('distance_distribution', distance_kwargs_list)
+        self.multi_visualizer.multi_ax_plot_by_single_visualizer('plot_twoD_threeD_distance_scatter', twoD_threeD_distance_scatter_kwargs_list)
+        self.multi_visualizer.multi_ax_plot_by_single_visualizer('plot_distance_distribution', distance_kwargs_list)
         self.multi_visualizer.add_tag()
         self.multi_visualizer.add_subfig_title()
-        # self.multi_visualizer.rm_redundant_xylabel()
-        self.multi_visualizer.save_fig(self.figdir+'/SI_fig_1')
 
-    def SI_fig_2(self):
-        '''
-        angle distance independence
-        '''
+        self.multi_visualizer.save_fig(self.figdir+'/distance_2d_3d_and_edr')
+
+    def plot_angle_distance_dependence(self):
         get_ax_kwargs = {'nrows': 2}
         get_suitable_fig_size_kwargs = {'nrows': 2, 'which': 'adjust_params_custom'}
         fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_fig_size_kwargs)
@@ -4207,45 +3823,39 @@ class PaperFig:
             independence_kwargs_list.append({'ax': ax[0], 'n_neighbors': n_neighbors})
             distance_threshold_list = np.linspace(0, np.nanmax(self.multi_visualizer.get_single_visualizer(title).animal_info.distance_2D.values), 40)
             if title == 'human_lariviere':
-                plt_line_xlim = [self.multi_visualizer.get_single_visualizer(title).axon_growth_model.get_unique_Lambda(), None]
+                plt_line_xlim = [self.multi_visualizer.get_single_visualizer(title).connection_model.get_unique_Lambda(), None]
             else:
-                plt_line_xlim = [2*self.multi_visualizer.get_single_visualizer(title).axon_growth_model.get_unique_Lambda(), None]
+                plt_line_xlim = [2*self.multi_visualizer.get_single_visualizer(title).connection_model.get_unique_Lambda(), None]
             angle_distance_independence_with_distance_threshold_kwargs_list.append({'ax': ax[1], 'distance_threshold_list': distance_threshold_list, 'plt_line_xlim': plt_line_xlim, 'n_neighbors': n_neighbors})
-        self.multi_visualizer.multi_ax_plot_by_single_visualizer('angle_distance_scatter', independence_kwargs_list)
-        self.multi_visualizer.multi_ax_plot_by_single_visualizer('angle_distance_independence_with_distance_threshold', angle_distance_independence_with_distance_threshold_kwargs_list)
+        self.multi_visualizer.multi_ax_plot_by_single_visualizer('plot_angle_distance_scatter', independence_kwargs_list)
+        self.multi_visualizer.multi_ax_plot_by_single_visualizer('plot_angle_distance_independence_with_distance_threshold', angle_distance_independence_with_distance_threshold_kwargs_list)
         for title, ax in ax_dict.items():
             ax[1].set_xlim(ax[0].get_xlim())
         self.multi_visualizer.add_tag()
         self.multi_visualizer.add_subfig_title(y=1.05)
-        # self.multi_visualizer.rm_redundant_xylabel()
-        self.multi_visualizer.save_fig(self.figdir+'/SI_fig_2')
 
-    def SI_fig_3(self):
-        '''
-        marmoset_V4 connection matrix , also compare with majka
-        '''
+        self.multi_visualizer.save_fig(self.figdir+'/angle_distance_dependence')
+
+    def plot_marmoset_atlas_comparison(self):
         marmoset_majka_visualizer = self.multi_visualizer.get_single_visualizer('marmoset_majka')
         marmoset_V4_visualizer = SingleCaseVisualizer('marmoset', 'V4', self.marmoset_V4_timedir)
 
         fig, axes = cf.get_fig_ax(nrows=2, ncols=2)
-        
-        marmoset_majka_visualizer.data_model_SC(ax_data=axes[0, 0], ax_model=axes[1, 0])
-        marmoset_V4_visualizer.data_model_SC(ax_data=axes[0, 1], ax_model=axes[1, 1])
+
+        marmoset_majka_visualizer.plot_data_model_SC(ax_data=axes[0, 0], ax_model=axes[1, 0])
+        marmoset_V4_visualizer.plot_data_model_SC(ax_data=axes[0, 1], ax_model=axes[1, 1])
 
         cf.add_axes_title(axes[:, 0], title='Paxinos', title_size=cf.SUP_TITLE_SIZE)
         cf.add_axes_title(axes[:, 1], title='MBM V4', title_size=cf.SUP_TITLE_SIZE)
 
         cf.add_axes_list_tag_by_order(axes.flatten().tolist())
-        cf.save_fig(fig, self.figdir+'/SI_fig_3', **self.save_fig_kwargs)
+        cf.save_fig(fig, self.figdir+'/marmoset_atlas_comparison', **self.save_fig_kwargs)
 
-    def SI_fig_4(self):
-        '''
-        connection statistics, mouse, macaque and human
-        '''
-        local_multi_visualizer = cf.MultiVisualizerByRow.from_multi_visualizer_instance(self.multi_visualizer)
+    def plot_connection_statistics_other_species(self):
+        local_multi_visualizer = self.multi_visualizer.clone(layout='row')
         with local_multi_visualizer.temporary_disable(['marmoset_majka']):
             margin = cf.MARGIN.copy()
-            # margin['top'] -= 0.1 # 原先横向排版所需
+
             get_ax_kwargs = {'nrows': 2, 'ncols': 3, 'margin': margin}
             get_suitable_fig_size_kwargs = {'nrows': 2, 'ncols': 3, 'margin': margin, 'which': 'margin'}
             fig_dict, ax_dict = local_multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_fig_size_kwargs)
@@ -4262,37 +3872,33 @@ class PaperFig:
                 SC_distribution_model_kwargs_list.append({'ax': ax[1, 1], 'data_or_model': 'model', 'log_scale': True})
                 distance_distribution_data_kwargs_list.append({'ax': ax[0, 2], 'data_or_model': 'data', 'dim': '2D'})
                 distance_distribution_model_kwargs_list.append({'ax': ax[1, 2], 'data_or_model': 'model', 'dim': '2D'})
-            local_multi_visualizer.multi_ax_plot_by_single_visualizer('distance_SC_scatter', distance_SC_data_kwargs_list)
-            local_multi_visualizer.multi_ax_plot_by_single_visualizer('distance_SC_scatter', distance_SC_model_kwargs_list)
-            local_multi_visualizer.multi_ax_plot_by_single_visualizer('SC_distribution', SC_distribution_data_kwargs_list)
-            local_multi_visualizer.multi_ax_plot_by_single_visualizer('SC_distribution', SC_distribution_model_kwargs_list)
-            local_multi_visualizer.multi_ax_plot_by_single_visualizer('distance_distribution', distance_distribution_data_kwargs_list)
-            local_multi_visualizer.multi_ax_plot_by_single_visualizer('distance_distribution', distance_distribution_model_kwargs_list)
+            local_multi_visualizer.multi_ax_plot_by_single_visualizer('plot_distance_SC_scatter', distance_SC_data_kwargs_list)
+            local_multi_visualizer.multi_ax_plot_by_single_visualizer('plot_distance_SC_scatter', distance_SC_model_kwargs_list)
+            local_multi_visualizer.multi_ax_plot_by_single_visualizer('plot_SC_distribution', SC_distribution_data_kwargs_list)
+            local_multi_visualizer.multi_ax_plot_by_single_visualizer('plot_SC_distribution', SC_distribution_model_kwargs_list)
+            local_multi_visualizer.multi_ax_plot_by_single_visualizer('plot_distance_distribution', distance_distribution_data_kwargs_list)
+            local_multi_visualizer.multi_ax_plot_by_single_visualizer('plot_distance_distribution', distance_distribution_model_kwargs_list)
             local_multi_visualizer.add_tag()
-            # local_multi_visualizer.add_subfig_title(y=1.06) # 原先横向排版所需
+
             local_multi_visualizer.add_subfig_title(y=1.02)
             for title, ax in ax_dict.items():
                 cf.reduce_ax_tick(ax[0, 1], axis='y', max_num=4)
                 cf.reduce_ax_tick(ax[1, 1], axis='y', max_num=4)
-            # local_multi_visualizer.rm_redundant_xylabel()
-            local_multi_visualizer.save_fig(self.figdir+'/SI_fig_4')
 
-    def SI_fig_5(self):
-        '''
-        area level correlation, all animals
+            local_multi_visualizer.save_fig(self.figdir+'/connection_statistics_other_species')
 
-        这里因为要搞成2x2的形式,所以要重新生成一个multi_visualizer
-        '''
-        local_multi_visualizer = cf.MultiVisualizer.from_multi_visualizer_instance(self.multi_visualizer)
+    def plot_area_performance_all_species(self):
+        local_multi_visualizer = self.multi_visualizer.clone(layout='grid')
         margin = cf.MARGIN.copy()
         margin['top'] = 0.8
         get_ax_kwargs = {'nrows': 1, 'margin': margin}
         get_suitable_fig_size_kwargs = {'nrows': 1, 'ax_width': cf.AX_WIDTH*2, 'margin': margin, 'which': 'margin'}
         fig_dict, ax_dict = local_multi_visualizer.get_fig_subfig_ax(subfig_ncols=2, subfig_nrows=2, get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_fig_size_kwargs)
+        local_multi_visualizer.fig.set_figheight(local_multi_visualizer.fig.get_figheight() * 0.924171)
         kwargs_list = []
         for title, ax in ax_dict.items():
             kwargs_list.append({'ax': ax, 'performance_metric': 'correlation', 'sort': True})
-        local_multi_visualizer.multi_ax_plot_by_single_visualizer('area_level_performance', kwargs_list)
+        local_multi_visualizer.multi_ax_plot_by_single_visualizer('plot_area_level_performance', kwargs_list)
         ax = ax_dict['human_lariviere']
         ticks = ax.get_xticks()
         labels = ax.get_xticklabels()
@@ -4300,45 +3906,36 @@ class PaperFig:
         ax.set_xticks(ticks=ticks[::offsetstep], labels=[l.get_text() for l in labels[::offsetstep]], rotation=90, fontsize=cf.TICK_SIZE)
         local_multi_visualizer.add_tag()
         local_multi_visualizer.add_subfig_title()
-        # local_multi_visualizer.rm_redundant_xylabel()
-        local_multi_visualizer.save_fig(self.figdir+'/SI_fig_5')
 
-    def SI_fig_6(self):
-        '''
-        distance & relative error
-        '''
+        local_multi_visualizer.save_fig(self.figdir+'/area_performance_all_species')
+
+    def plot_distance_relative_error(self):
         get_ax_kwargs = {'nrows': 1}
         get_suitable_fig_size_kwargs = {'nrows': 1, 'which': 'adjust_params_custom'}
         fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_fig_size_kwargs)
         kwargs_list = []
         for title, ax in ax_dict.items():
             kwargs_list.append({'ax': ax, 'dim': '2D'})
-        self.multi_visualizer.multi_ax_plot_by_single_visualizer('distance_relative_error', kwargs_list)
+        self.multi_visualizer.multi_ax_plot_by_single_visualizer('plot_distance_relative_error', kwargs_list)
         self.multi_visualizer.add_tag()
         self.multi_visualizer.add_subfig_title(y=1.05)
-        # self.multi_visualizer.rm_redundant_xylabel()
-        self.multi_visualizer.save_fig(self.figdir+'/SI_fig_6')
 
-    def SI_fig_7(self):
-        '''
-        direction preference & performance (correlation)
-        '''
+        self.multi_visualizer.save_fig(self.figdir+'/distance_relative_error')
+
+    def plot_direction_preference_performance(self):
         get_ax_kwargs = {'nrows': 1}
         get_suitable_fig_size_kwargs = {'nrows': 1, 'which': 'adjust_params_custom'}
         fig_dict, ax_dict = self.multi_visualizer.get_fig_subfig_ax(get_ax_kwargs=get_ax_kwargs, get_suitable_fig_size_kwargs=get_suitable_fig_size_kwargs)
         kwargs_list = []
         for title, ax in ax_dict.items():
             kwargs_list.append({'ax': ax, 'performance_metric': 'correlation', 'mode': 'uniform', 'diagonal': False})
-        self.multi_visualizer.multi_ax_plot_by_single_visualizer('direction_preference_performance_scatter', kwargs_list)
+        self.multi_visualizer.multi_ax_plot_by_single_visualizer('plot_direction_preference_performance_scatter', kwargs_list)
         self.multi_visualizer.add_tag()
         self.multi_visualizer.add_subfig_title()
-        # self.multi_visualizer.rm_redundant_xylabel()
-        self.multi_visualizer.save_fig(self.figdir+'/SI_fig_7')
+
+        self.multi_visualizer.save_fig(self.figdir+'/direction_preference_performance')
 
     def private_fig_1(self):
-        '''
-        test different neighbor num, and how it influence angle distance independence
-        '''
         for n_neighbors in range(3, 30):
             get_ax_kwargs = {'nrows': 2}
             get_suitable_fig_size_kwargs = {'nrows': 2, 'which': 'adjust_params_custom'}
@@ -4349,26 +3946,20 @@ class PaperFig:
                 independence_kwargs_list.append({'ax': ax[0], 'n_neighbors': n_neighbors})
                 distance_threshold_list = np.linspace(0, np.nanmax(self.multi_visualizer.get_single_visualizer(title).animal_info.distance_2D.values), 40)
                 if title == 'human_lariviere':
-                    plt_line_xlim = [self.multi_visualizer.get_single_visualizer(title).axon_growth_model.get_unique_Lambda(), None]
+                    plt_line_xlim = [self.multi_visualizer.get_single_visualizer(title).connection_model.get_unique_Lambda(), None]
                 else:
-                    plt_line_xlim = [2*self.multi_visualizer.get_single_visualizer(title).axon_growth_model.get_unique_Lambda(), None]
+                    plt_line_xlim = [2*self.multi_visualizer.get_single_visualizer(title).connection_model.get_unique_Lambda(), None]
                 angle_distance_independence_with_distance_threshold_kwargs_list.append({'ax': ax[1], 'distance_threshold_list': distance_threshold_list, 'plt_line_xlim': plt_line_xlim, 'n_neighbors': n_neighbors})
-            self.multi_visualizer.multi_ax_plot_by_single_visualizer('angle_distance_scatter', independence_kwargs_list)
-            self.multi_visualizer.multi_ax_plot_by_single_visualizer('angle_distance_independence_with_distance_threshold', angle_distance_independence_with_distance_threshold_kwargs_list)
+            self.multi_visualizer.multi_ax_plot_by_single_visualizer('plot_angle_distance_scatter', independence_kwargs_list)
+            self.multi_visualizer.multi_ax_plot_by_single_visualizer('plot_angle_distance_independence_with_distance_threshold', angle_distance_independence_with_distance_threshold_kwargs_list)
             for title, ax in ax_dict.items():
                 ax[1].set_xlim(ax[0].get_xlim())
             self.multi_visualizer.add_tag()
             self.multi_visualizer.add_subfig_title(y=1.05)
-            # self.multi_visualizer.rm_redundant_xylabel()
+
             self.multi_visualizer.save_fig(self.figdir+'/private_fig_1/'+f'n_neighbors_{n_neighbors}')
 
     def table_1(self):
-        '''
-        SC在某个强度范围内的比例
-        
-        SC_proportion_dict: 在这个类型中的边数量除以总可能边数量
-        SC_proportion_in_existing_dict: 在这个类型中的边数量除以已经存在的边数量(注意all指的是所有连接的边,both指的才是有连没连都计入的)
-        '''
         SC_proportion_dict = {}
         SC_proportion_in_existing_dict = defaultdict(dict)
         for single_visualizer in self.multi_visualizer.single_visualizer_list:
@@ -4386,7 +3977,7 @@ class PaperFig:
         kwargs_list = []
         for title, ax in ax_dict.items():
             kwargs_list.append({'ax_data': ax[0], 'ax_model': ax[1], 'topo': True})
-        self.multi_visualizer.multi_ax_plot_by_single_visualizer('data_model_SC', kwargs_list)
+        self.multi_visualizer.multi_ax_plot_by_single_visualizer('plot_data_model_SC', kwargs_list)
         self.multi_visualizer.add_tag()
         self.multi_visualizer.add_subfig_title(y=1.0)
         self.multi_visualizer.rm_redundant_xylabel()
@@ -4396,131 +3987,14 @@ class PaperFig:
         for single_visualizer in self.multi_visualizer.single_visualizer_list:
             for area in single_visualizer.animal_info.full_name:
                 fig, ax = cf.get_fig_ax()
-                single_visualizer.retrograde_neuron_by_area(ax, area)
+                single_visualizer.plot_retrograde_neuron_by_area(ax, area)
                 cf.set_ax(ax, title=area)
                 cf.save_fig(fig, cf.pj(self._check_figdir, single_visualizer.title, cf.cat(area, 'retrograde')), **self.save_fig_kwargs)
-    
+
     def _check_anterograde_neuron_by_area(self):
         for single_visualizer in self.multi_visualizer.single_visualizer_list:
             for area in single_visualizer.animal_info.full_name:
                 fig, ax = cf.get_fig_ax()
-                single_visualizer.anterograde_neuron_by_area(ax, area)
+                single_visualizer.plot_anterograde_neuron_by_area(ax, area)
                 cf.set_ax(ax, title=area)
                 cf.save_fig(fig, cf.pj(self._check_figdir, single_visualizer.title, cf.cat(area, 'anterograde')), **self.save_fig_kwargs)
-
-
-def performance_heatmap(ax_list, different_model_performance_dict, only_show_animal=True, show_accuracy_list=None, accuracy_key_to_label_in_fig_dict=None):
-    organized_different_model_performance_dict = cf.swap_dict_level(different_model_performance_dict, {0: 1, 1: 0})
-    for i, (animal_and_dataset_key, local_performance_dict) in enumerate(organized_different_model_performance_dict.items()):
-        ax = ax_list[i]
-        animal = animal_and_dataset_key.split('_')[0]
-        different_model_performance_df = pd.DataFrame(local_performance_dict)
-        
-        # if animal in ['mouse', 'macaque']:
-        #     molnar_performance = get_molnar_performance(animal=animal, dataset_key='gamanut' if animal=='mouse' else 'markov29')
-        #     for k, v in molnar_performance.items():
-        #         RMAE = v['RMAE']
-        #         different_model_performance_df.loc[f'accuracy_{k}', 'molnar'] = 1 - RMAE
-        #     different_model_performance_df.loc['correlation', 'Molnár et al. 2024'] = np.nan  # Molnár et al.没有提供correlation指标
-        
-        if show_accuracy_list is not None:
-            different_model_performance_df = cf.get_sub_df(different_model_performance_df, row_list=show_accuracy_list)
-        if accuracy_key_to_label_in_fig_dict is not None:
-            different_model_performance_df.index = [accuracy_key_to_label_in_fig_dict.get(row, row) for row in different_model_performance_df.index]
-        cf.sns_heatmap(ax, different_model_performance_df, cmap=cf.DENSITY_CMAP, heatmap_kwargs={'annot': True, 'fmt': '.3f'})
-        # 在每一行的最大值上添加一个三角形
-        for row_idx in range(different_model_performance_df.shape[0]):
-            row_values = different_model_performance_df.iloc[row_idx].values
-            max_col_idx = np.nanargmax(row_values)
-            max_value = row_values[max_col_idx]
-            cf.plt_polygon(ax, [[max_col_idx, row_idx], [max_col_idx, row_idx + 1], [max_col_idx + 1, row_idx]], color='red')
-        title = animal if only_show_animal else animal_and_dataset_key
-        cf.set_ax(ax, xlabel='Model Type', ylabel='', title=title)
-
-
-def performance_bar(ax, performance_dict, performance_metric='correlation'):
-    swaped_performance_dict = cf.swap_dict_level(performance_dict, {0: 1, 1: 0})
-    animal_list = []
-    model_performance_list = []
-    for animal_and_dataset_key in swaped_performance_dict.keys():
-        animal = animal_and_dataset_key.split('_')[0]
-        animal_list.append(animal)
-        model_performance_list.append([])
-        for model_type in swaped_performance_dict[animal_and_dataset_key].keys():
-            performance_value = swaped_performance_dict[animal_and_dataset_key][model_type][performance_metric]
-            model_performance_list[-1].append(performance_value)
-    cf.plt_group_bar(ax, animal_list, model_performance_list, label_list=list(swaped_performance_dict[animal_and_dataset_key].keys()), inner_gap=0.5, width=0.06)
-    cf.set_ax(ax, ylabel=performance_metric.capitalize(), ylim=[0.2, None], tick_size=cf.LABEL_SIZE, xtick_size=cf.LABEL_SIZE, legend_size=cf.LABEL_SIZE, legend_loc='lower right', bbox_to_anchor=(1., 0.9), legend_kwargs={'ncol': 2})
-
-
-class PaperFigCompareModel:
-    def __init__(self, model_timedir_list_UAR_EDR, model_timedir_list_song, model_timedir_list_area_EDR_3d, model_timedir_list_betzel_like, model_timedir_list_adapted_betzel_like):
-        self.animal_list = ['mouse', 'marmoset', 'macaque', 'human']
-        self.dataset_key_list = ['gamanut', 'majka', 'markov40', 'lariviere']
-        self.animal_num = len(self.animal_list)
-        self.figdir = '../../results/figs_compare_model/'
-        self.force_re_compute = False
-        self.force_re_compute = True
-
-        self.model_timedir_list_UAR_EDR = model_timedir_list_UAR_EDR
-        self.model_timedir_list_song = model_timedir_list_song
-        self.model_timedir_list_area_EDR_3d = model_timedir_list_area_EDR_3d
-        self.model_timedir_list_betzel_like = model_timedir_list_betzel_like
-        # self.model_timedir_list_adapted_betzel_like = model_timedir_list_adapted_betzel_like
-
-        self.multi_visualizer_UAR_EDR = MultiCaseVisualizer(self.animal_list, self.dataset_key_list, self.model_timedir_list_UAR_EDR)
-        self.multi_visualizer_song = MultiCaseVisualizer(self.animal_list, self.dataset_key_list, self.model_timedir_list_song)
-        self.multi_visualizer_area_EDR_3d = MultiCaseVisualizer(self.animal_list, self.dataset_key_list, self.model_timedir_list_area_EDR_3d)
-        self.multi_visualizer_betzel_like = MultiCaseVisualizer(self.animal_list, self.dataset_key_list, self.model_timedir_list_betzel_like)
-        # self.multi_visualizer_adapted_betzel_like = MultiCaseVisualizer(self.animal_list, self.dataset_key_list, self.model_timedir_list_adapted_betzel_like)
-
-    def get_performance(self):
-        if not self.force_re_compute:
-            with cf.FlexibleTry():
-                different_model_performance_dict = cf.load_dict(self.figdir+'/different_model_performance_dict/different_model_performance_dict')
-                return different_model_performance_dict
-        different_model_performance_dict = {}
-        # model_types = ['UAR_EDR', 'song', 'area_EDR_3d', 'betzel_like', 'adapted_betzel_like']
-        # multi_visualizers = [self.multi_visualizer_UAR_EDR, self.multi_visualizer_song, self.multi_visualizer_area_EDR_3d, self.multi_visualizer_betzel_like, self.multi_visualizer_adapted_betzel_like]
-        # model_types = ['UAR & EDR (ours)', 'Attractive Force (adapted from Song et al. 2014)', 'Area-level 3D EDR (adapted from Ercsey-Ravasz et al. 2013)', 'Geometry & Topology (adapted from Betzel et al. 2016)']
-        model_types = ['UAR & EDR (neuron level, 2D)', 'Attractive Force & EDR (neuron level, 2D)', 'EDR only (area level, 3D)', 'Topology & EDR (area level, 3D)']
-        multi_visualizers = [self.multi_visualizer_UAR_EDR, self.multi_visualizer_song, self.multi_visualizer_area_EDR_3d, self.multi_visualizer_betzel_like]
-
-        for model_type, multi_visualizer in zip(model_types, multi_visualizers):
-            performance_dict = {}
-            for single_visualizer in multi_visualizer.single_visualizer_list:
-                animal = single_visualizer.animal
-                dataset_key = single_visualizer.dataset_key
-                animal_and_dataset_key = single_visualizer.animal_info.animal_and_dataset_key
-                performance_dict[animal_and_dataset_key] = get_performance_dict(
-                    SC_data=single_visualizer.SC_data,
-                    SC_model=single_visualizer.SC_model_masked,
-                    animal=animal,
-                    dataset_key=dataset_key,
-                    diagonal=False
-                )
-            different_model_performance_dict[model_type] = performance_dict
-        cf.save_dict(different_model_performance_dict, self.figdir+'/different_model_performance_dict/different_model_performance_dict')
-        return different_model_performance_dict
-    
-    def performance_heatmap(self):
-        different_model_performance_dict = self.get_performance()
-        
-        margin = cf.MARGIN.copy()
-        margin.update({'left': 0.1, 'right': 0.7})
-        fig, ax = cf.get_fig_ax(ncols=4, margin=margin)
-        performance_heatmap(ax, different_model_performance_dict, only_show_animal=True)
-        cf.save_fig(fig, cf.pj(self.figdir, 'performance_heatmap_full'), bbox_inches='tight')
-
-        fig, ax = cf.get_fig_ax(ncols=4, margin=margin)
-        performance_heatmap(ax, different_model_performance_dict, only_show_animal=True, show_accuracy_list=['correlation', 'accuracy_strong', 'accuracy_medium_strong', 'accuracy_weak_medium', 'accuracy_weak'], accuracy_key_to_label_in_fig_dict={'correlation': 'corr', 'accuracy_strong': 'acc_strong', 'accuracy_medium_strong': 'acc_med_strong', 'accuracy_weak_medium': 'acc_weak_med', 'accuracy_weak': 'acc_weak'})
-        cf.save_fig(fig, cf.pj(self.figdir, 'performance_heatmap_selected'), bbox_inches='tight')
-
-    def performance_bar_plot(self):
-        different_model_performance_dict = self.get_performance()
-
-        fig, ax = cf.get_fig_ax(ncols=4)
-        ax = cf.merge_ax(ax)
-        performance_bar(ax, different_model_performance_dict, performance_metric='correlation')
-        cf.save_fig(fig, cf.pj(self.figdir, 'performance_bar_plot_correlation'), bbox_inches='tight')
-# endregion

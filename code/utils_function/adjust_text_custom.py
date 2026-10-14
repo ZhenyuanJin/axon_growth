@@ -1,15 +1,16 @@
-from __future__ import division, annotations
+from __future__ import annotations, division
 
+import io
 from functools import lru_cache
-import numpy as np
+from logging import getLogger
+from timeit import default_timer as timer
+
 import matplotlib
+import numpy as np
+import scipy.spatial.distance
 from matplotlib import pyplot as plt
 from matplotlib.patches import FancyArrowPatch
 from matplotlib.path import get_path_collection_extents
-import scipy.spatial.distance
-from logging import getLogger
-from timeit import default_timer as timer
-import io
 
 logger = getLogger(__name__)
 
@@ -450,12 +451,12 @@ def iterate(
     coords,
     target_coords,
     static_coords=None,
-    force_text: tuple[float, float] = (0.1, 0.2),
-    force_static: tuple[float, float] = (0.05, 0.1),
-    force_pull: tuple[float, float] = (0.05, 0.1),
-    pull_threshold: float = 10,
-    expand: tuple[float, float] = (1.05, 1.1),
-    max_move: tuple[int, int] = (10, 10),
+    force_text=(0.1, 0.2),
+    force_static=(0.05, 0.1),
+    force_pull=(0.05, 0.1),
+    pull_threshold=10,
+    expand=(1.05, 1.1),
+    max_move=(10, 10),
     bbox_to_contain=False,
     only_move={"text": "xy", "static": "xy", "explode": "xy", "pull": "xy"},
     rng=None,
@@ -562,7 +563,7 @@ def force_draw(ax):
 
 
 @lru_cache(None)
-def warn_once(msg: str):
+def warn_once(msg):
     logger.warning(msg)
 
 
@@ -595,21 +596,21 @@ def adjust_text(
     target_y=None,
     avoid_self=True,
     prevent_crossings=True,
-    force_text: tuple[float, float] | float = (0.1, 0.2),
-    force_static: tuple[float, float] | float = (0.1, 0.2),
-    force_pull: tuple[float, float] | float = (0.01, 0.01),
-    force_explode: tuple[float, float] | float = (0.1, 0.5),
-    pull_threshold: float = 10,
-    expand: tuple[float, float] = (1.05, 1.2),
-    max_move: tuple[int, int] | int | None = (10, 10),
-    explode_radius: str | float = "auto",
-    ensure_inside_axes: bool = True,
-    expand_axes: bool = False,
-    only_move: dict = {"text": "xy", "static": "xy", "explode": "xy", "pull": "xy"},
-    ax: matplotlib.axes.Axes | None = None,
-    min_arrow_len: float = 5,
-    time_lim: float | None = None,
-    iter_lim: int | None = None,
+    force_text=(0.1, 0.2),
+    force_static=(0.1, 0.2),
+    force_pull=(0.01, 0.01),
+    force_explode=(0.1, 0.5),
+    pull_threshold=10,
+    expand=(1.05, 1.2),
+    max_move=(10, 10),
+    explode_radius="auto",
+    ensure_inside_axes=True,
+    expand_axes=False,
+    only_move={"text": "xy", "static": "xy", "explode": "xy", "pull": "xy"},
+    ax=None,
+    min_arrow_len=5,
+    time_lim=None,
+    iter_lim=None,
     seed=0,
     *args,
     **kwargs,

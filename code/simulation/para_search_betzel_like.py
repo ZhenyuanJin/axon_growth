@@ -1,17 +1,17 @@
-import sys
-sys.path.append('../utils_function/')
-import utils_function as uf
-import common_functions as cf
-import pandas as pd
-import numpy as np
 import os
 from itertools import product
+
+import numpy as np
+import pandas as pd
+from utils_function import cf
+from utils_function import utils_function as uf
+
 
 def get_Lambda_range(animal, dataset_key):
     animal_info = uf.AnimalInfo(animal=animal, dataset_key=dataset_key)
     distance_3D = animal_info.distance_3D
     max_distance = np.max(distance_3D.values)
-    # num = 20
+
     num = 10
     if animal == 'mouse' and dataset_key == 'gamanut':
         Lambda_range = [np.linspace(0.1, max_distance/2, num)]
@@ -31,9 +31,9 @@ def get_Lambda_range(animal, dataset_key):
 
 
 def get_gamma_range():
-    # return np.linspace(-2., 2.0, 21)
-    # return np.linspace(-2., 2.0, 10)
-    return [0.4] # use the optimal gamma in the paper
+
+
+    return [0.4]
 
 
 def get_seed_range():
@@ -50,8 +50,8 @@ def main(params):
     model.SC_model_dict
 
 
-# animal_list = ['mouse', 'marmoset', 'macaque', 'human', 'marmoset']
-# dataset_key_list = ['gamanut', 'majka', 'markov40', 'lariviere', 'V4']
+
+
 animal_list = ['mouse', 'marmoset', 'macaque', 'human']
 dataset_key_list = ['gamanut', 'majka', 'markov40', 'lariviere']
 params_list = []
