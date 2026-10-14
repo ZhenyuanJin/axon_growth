@@ -36,7 +36,7 @@ def test_converted_workflows_do_not_use_parent_relative_paths():
 
 
 def test_plotting_does_not_restore_single_or_multi_visualizers():
-    source = (ROOT / "code" / "utils_function" / "paper_figures.py").read_text(encoding="utf-8")
+    source = (ROOT / "code" / "visualization" / "paper_figures.py").read_text(encoding="utf-8")
     assert "SingleCaseVisualizer" not in source
     assert "MultiCaseVisualizer" not in source
     assert "single_visualizer" not in source
@@ -44,7 +44,18 @@ def test_plotting_does_not_restore_single_or_multi_visualizers():
 
 
 def test_plot_functions_do_not_accept_case_containers():
-    source = (ROOT / "code" / "utils_function" / "paper_figures.py").read_text(encoding="utf-8")
+    source = (ROOT / "code" / "visualization" / "paper_figures.py").read_text(encoding="utf-8")
     assert "case_dict" not in source
     assert "case_data" not in source
     assert "getattr(" not in source
+
+
+def test_supported_entry_points_are_grouped_by_workflow():
+    assert not list((ROOT / "code").glob("run_*.py"))
+    expected = [
+        ROOT / "code" / "simulation" / "run_connection_generation.py",
+        ROOT / "code" / "simulation" / "run_parameter_search.py",
+        ROOT / "code" / "result_analysis" / "run_result_analysis.py",
+        ROOT / "code" / "visualization" / "run_paper_figures.py",
+    ]
+    assert all(path.is_file() for path in expected)

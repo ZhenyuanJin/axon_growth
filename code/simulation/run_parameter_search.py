@@ -5,7 +5,7 @@ import numpy as np
 from utils_function import cf
 from utils_function import utils_function as uf
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 OUTPUT_DIR = PROJECT_ROOT / "results" / "parameter_search"
 WORKER_COUNT = 10
 CONNECTION_COUNT = int(8e6)

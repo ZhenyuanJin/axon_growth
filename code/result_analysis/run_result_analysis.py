@@ -4,7 +4,7 @@ from pathlib import Path
 
 from utils_function import utils_function as uf
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SEARCH_DIR = PROJECT_ROOT / "results" / "parameter_search"
 OUTPUT_FILE = PROJECT_ROOT / "results" / "optimal_parameters.json"
 

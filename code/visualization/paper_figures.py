@@ -8,9 +8,8 @@ import pandas as pd
 import scipy
 from sklearn.feature_selection import mutual_info_regression
 
-from . import cf
-from . import utils_function as uf
-from .model_runtime import save_json
+from utils_function import cf
+from utils_function import utils_function as uf
 
 
 def get_multi_panel_figure(title_list, layout='column', subfig_nrows=None, subfig_ncols=None, get_suitable_fig_size_kwargs=None, get_fig_subfig_kwargs=None, get_ax_kwargs=None):
@@ -350,25 +349,6 @@ class PaperFig:
         for plot_method in plot_methods:
             plot_method()
             gc.collect()
-        reference_mapping = {
-            'fig_1.pdf': 'connection_generation_method_overview',
-            'fig_2.pdf': 'cross_species_connectivity_fit',
-            'fig_3.pdf': 'direction_distribution_comparison',
-            'fig_4.pdf': 'marmoset_connection_statistics',
-            'fig_5.pdf': 'long_range_connection_analysis',
-            'fig_6.pdf': 'cross_species_scaling',
-            'SI_fig_1.pdf': 'distance_2d_3d_and_edr',
-            'SI_fig_2.pdf': 'angle_distance_dependence',
-            'SI_fig_3.pdf': 'marmoset_atlas_comparison',
-            'SI_fig_4.pdf': 'connection_statistics_other_species',
-            'SI_fig_5.pdf': 'marmoset_area_performance_and_retrograde',
-            'SI_fig_6.pdf': 'area_performance_all_species',
-            'SI_fig_7.pdf': 'distance_relative_error',
-            'SI_fig_8.pdf': 'angle_uniformity_by_distance_threshold',
-            'SI_fig_10.pdf': 'marmoset_direction_and_injection_bias',
-            'SI_fig_11.pdf': 'direction_preference_performance',
-        }
-        save_json(reference_mapping, Path(self.figdir) / 'reference_mapping.json')
 
     def plot_connection_generation_method_overview(self):
         animal = 'marmoset'

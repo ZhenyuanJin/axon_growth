@@ -1,11 +1,11 @@
 from pathlib import Path
 
-from run_connection_generation import DATASETS, OUTPUT_DIR, get_run_config
+from simulation.run_connection_generation import DATASETS, OUTPUT_DIR, get_run_config
 from utils_function import utils_function as uf
 from utils_function.model_runtime import get_config_hash
-from utils_function.paper_figures import PaperFig
+from visualization.paper_figures import PaperFig
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FIGURE_DIR = PROJECT_ROOT / "results" / "figures"
 
 
@@ -23,7 +23,7 @@ def main():
     missing = [str(path) for path in run_dir_by_dataset.values() if not path.exists()]
     if missing:
         raise FileNotFoundError(
-            "Run code/run_connection_generation.py before plotting. Missing:\n"
+            "Run make connection-generation before plotting. Missing:\n"
             + "\n".join(missing)
         )
     model_run_dirs = [
