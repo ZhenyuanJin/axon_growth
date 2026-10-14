@@ -4,8 +4,8 @@
 
 
 
-import os
 from collections import defaultdict
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import nibabel as nib
@@ -13,6 +13,9 @@ import numpy as np
 import pandas as pd
 from utils_function import cf
 from utils_function import utils_function as uf
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+RAW_DATA_DIR = PROJECT_ROOT / 'raw_data' / 'marmoset_V4'
 
 
 def get_weighted_centroid(data, coordinates):
@@ -38,8 +41,8 @@ yscale = 35.332
 
 
 
-file_path_cells = r'../../raw_data/marmoset_V4/injection/all_cells.func.gii'
-file_path_inject = r'../../raw_data/marmoset_V4/injection/all_inject.func.gii'
+file_path_cells = RAW_DATA_DIR / 'injection' / 'all_cells.func.gii'
+file_path_inject = RAW_DATA_DIR / 'injection' / 'all_inject.func.gii'
 
 
 all_cells = nib.load(file_path_cells)
@@ -55,7 +58,7 @@ print(np.max(all_cells.darrays[0].data))
 print(np.max(all_inject.darrays[0].data))
 
 
-flatmap_gii = nib.load('../../raw_data/marmoset_V4/Template/lh.full.flat.patch.surf.gii')
+flatmap_gii = nib.load(RAW_DATA_DIR / 'Template' / 'lh.full.flat.patch.surf.gii')
 print(flatmap_gii)
 print(flatmap_gii.meta.metadata)
 print(flatmap_gii.darrays[0].data.shape)
@@ -67,19 +70,19 @@ flatmap = flatmap_gii.darrays[0].data
 flatmap = np.array([flatmap[:, 1], -flatmap[:, 0], flatmap[:, 2]]).T
 
 
-surface_gii = nib.load('../../raw_data/marmoset_V4/Template/lh.graymid.surf.gii')
+surface_gii = nib.load(RAW_DATA_DIR / 'Template' / 'lh.graymid.surf.gii')
 surface = surface_gii.darrays[0].data
 
 
-v4_label_gii = nib.load('../../raw_data/marmoset_V4/MBMv4-only/surfFS.lh.MBMv4_cortex_parcellation.label.gii')
+v4_label_gii = nib.load(RAW_DATA_DIR / 'MBMv4-only' / 'surfFS.lh.MBMv4_cortex_parcellation.label.gii')
 print(v4_label_gii.darrays[0].data.shape)
 print(set(v4_label_gii.darrays[0].data))
 v4_label = v4_label_gii.darrays[0].data
 
-paxinos_label_gii = nib.load('../../raw_data/marmoset_V4/Template/lh.MBM_cortex_vPaxinos.label.gii')
+paxinos_label_gii = nib.load(RAW_DATA_DIR / 'Template' / 'lh.MBM_cortex_vPaxinos.label.gii')
 paxinos_label = paxinos_label_gii.darrays[0].data
 
-paxinos_atlas_labels = pd.read_excel('../../raw_data/marmoset_V4/paxinos/atlas_labels.xlsx')
+paxinos_atlas_labels = pd.read_excel(RAW_DATA_DIR / 'paxinos' / 'atlas_labels.xlsx')
 paxinos_area_name = {}
 for i in range(len(paxinos_atlas_labels)):
     paxinos_area_name[i] = paxinos_atlas_labels['Area'][i]

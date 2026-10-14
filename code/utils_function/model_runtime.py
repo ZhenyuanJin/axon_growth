@@ -137,7 +137,7 @@ class ConnectionModel:
         self.outcomes_dir = self.run_dir
         self.figs_dir = os.path.join(self.run_dir, "figures")
 
-    def set_timedir(self, run_dir):
+    def set_timedir(self, run_dir, load_simulation=True):
         self.run_dir = os.path.abspath(run_dir)
         self.timedir = self.run_dir
         self.outcomes_dir = self.run_dir
@@ -145,7 +145,10 @@ class ConnectionModel:
         manifest = load_json(os.path.join(self.run_dir, "manifest.json"))
         self.set_default_params()
         self.set_params(manifest["config"])
-        self.simulation_results = load_simulation_results(self.run_dir)
+        if load_simulation:
+            self.simulation_results = load_simulation_results(self.run_dir)
+        else:
+            self.simulation_results = {}
 
     def run(self):
         manifest_path = os.path.join(self.run_dir, "manifest.json")

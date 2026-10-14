@@ -34,3 +34,11 @@ def test_saved_run_can_be_loaded(tmp_path):
     assert loaded.params == saved.params
     assert loaded.SC_model_dict.keys() == saved.SC_model_dict.keys()
     assert loaded.get_simulation_value("ss").shape[1] == 2
+
+
+def test_saved_run_can_skip_large_simulation_arrays(tmp_path):
+    saved = uf.get_connection_generation_results(get_config(1), tmp_path, force_run=True)
+    loaded = uf.ConnectionGenerationModel()
+    loaded.set_timedir(saved.run_dir, load_simulation=False)
+    assert loaded.simulation_results == {}
+    assert loaded.SC_model_dict.keys() == saved.SC_model_dict.keys()

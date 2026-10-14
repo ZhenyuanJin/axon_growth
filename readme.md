@@ -31,10 +31,13 @@ python code/run_result_analysis.py
 
 ## Code layout
 
-- `code/utils_function/utils_function.py`: data loading, model calculations, analyses, and domain plots.
+- `code/utils_function/utils_function.py`: data loading, model calculations, and analyses.
+- `code/utils_function/paper_figures.py`: functional plotting helpers and the `PaperFig` figure orchestrator.
 - `code/utils_function/cf/`: project-local I/O, statistics, parallel, plotting, and style helpers.
 - `code/run_*.py`: supported entry points for generation, parameter search, result analysis, and figure creation.
 - `code/data_analysis/`, `code/result_analysis/`, and `code/simulation/`: detailed Python workflows converted from the former notebooks.
+
+All workflow data and output paths are resolved from each script's location rather than the current working directory.
 
 ## Data and outputs
 

@@ -3,6 +3,7 @@ from pathlib import Path
 from run_connection_generation import DATASETS, OUTPUT_DIR, get_run_config
 from utils_function import utils_function as uf
 from utils_function.model_runtime import get_config_hash
+from utils_function.paper_figures import PaperFig
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FIGURE_DIR = PROJECT_ROOT / "results" / "figures"
@@ -31,7 +32,7 @@ def main():
         run_dir_by_dataset["macaque_markov40"],
         run_dir_by_dataset["human_lariviere"],
     ]
-    figures = uf.PaperFig(
+    figures = PaperFig(
         model_timedir_list=[str(path) for path in model_run_dirs],
         marmoset_V4_timedir=str(run_dir_by_dataset["marmoset_V4"]),
         output_dir=FIGURE_DIR,

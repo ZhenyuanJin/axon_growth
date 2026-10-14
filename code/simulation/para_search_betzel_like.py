@@ -1,10 +1,14 @@
-import os
 from itertools import product
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from utils_function import cf
 from utils_function import utils_function as uf
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+RESULTS_DIR = PROJECT_ROOT / 'results'
+UTILS_FILE = PROJECT_ROOT / 'code' / 'utils_function' / 'utils_function.py'
 
 
 def get_Lambda_range(animal, dataset_key):
@@ -41,11 +45,10 @@ def get_seed_range():
 
 
 def main(params):
-    basedir = '../../results/'
-    basedir = cf.pj(basedir, os.path.splitext(os.path.basename(cf.current_file()))[0])
+    basedir = RESULTS_DIR / Path(__file__).stem
 
     model = uf.BetzelLikeModel()
-    model.set_up(params=params, basedir=basedir, code_file_list=[cf.current_file(), '../utils_function/utils_function.py'])
+    model.set_up(params=params, basedir=basedir, code_file_list=[str(Path(__file__).resolve()), str(UTILS_FILE)])
     model.run()
     model.SC_model_dict
 
