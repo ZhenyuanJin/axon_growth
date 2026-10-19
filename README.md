@@ -28,14 +28,6 @@ make parameter-search
 make result-analysis
 ```
 
-The isolated 3D EDR scans are run with:
-
-```bash
-PYTHONPATH=code python code/voxel_edr_3d/run_parameter_search.py
-PYTHONPATH=code python code/voxel_edr_3d/run_macaque_parameter_search.py
-PYTHONPATH=code python code/human_edr_binned_3d/run_parameter_search.py
-```
-
 Set a specific interpreter when needed, for example `make test PYTHON=/path/to/python`.
 
 ## Code layout
@@ -46,8 +38,6 @@ Set a specific interpreter when needed, for example `make test PYTHON=/path/to/p
 - `code/result_analysis/`: parameter-search result analysis.
 - `code/visualization/`: functional plotting helpers, the `PaperFig` orchestrator, and figure generation.
 - `code/data_analysis/`: additional data-analysis workflows converted from the former notebooks.
-- `code/voxel_edr_3d/`: isolated exact grid-distance EDR scans for marmoset and macaque.
-- `code/human_edr_binned_3d/`: isolated 0.1 mm binned 3D EDR scan for human.
 - `Makefile`: supported repository-root commands; it exposes local code without installing a package.
 
 All workflow data and output paths are resolved from each script's location rather than the current working directory.
