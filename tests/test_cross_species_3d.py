@@ -7,6 +7,7 @@ from cross_species_3d import analysis
 from cross_species_3d import model
 from cross_species_3d import preprocess
 from utils_function import cf
+from utils_function import utils_function as uf
 
 
 def get_voxel_catalog(tmp_path):
@@ -33,6 +34,31 @@ def load_voxel_samples(cache_dir, seed):
 def load_human_samples(cache_dir, probabilities, seed):
     catalog = model.load_human_bin_catalog(cache_dir)
     return model.get_human_area_connection_matrix(catalog, probabilities, 2000, seed).values
+
+
+def test_3d_matrices_follow_available_area_centers(monkeypatch, tmp_path):
+    class Info:
+        full_name = ["A", "B", "excluded"]
+        area_center_dict_3D = {"A": np.asarray([0, 0, 0]), "B": np.asarray([3, 4, 0])}
+        distance_matrix_dir = str(tmp_path / "distance") + "/"
+        angle_matrix_dir = str(tmp_path / "angle") + "/"
+
+    monkeypatch.setattr(uf, "AnimalInfo", lambda *args: Info())
+    distance = uf.generate_distance_matrix("mouse", "gamanut", dim="3D")
+    angles = uf.generate_angle_matrix("mouse", "gamanut", dim="3D")
+    assert distance.index.tolist() == ["A", "B"]
+    assert np.allclose(distance.values, [[0, 5], [5, 0]])
+    assert angles["azim"].shape == (2, 2)
+    assert angles["elev"].shape == (2, 2)
+
+
+def test_matrix_alignment_uses_distance_regions():
+    matrix = pd.DataFrame(np.arange(9).reshape(3, 3), index=["A", "B", "C"], columns=["A", "B", "C"])
+    distance = pd.DataFrame(np.zeros((2, 2)), index=["C", "A"], columns=["C", "A"])
+    aligned = uf.get_matrix_aligned_to_distance(matrix, distance)
+    assert aligned.index.tolist() == ["C", "A"]
+    assert aligned.columns.tolist() == ["C", "A"]
+    assert np.array_equal(aligned.values, [[8, 6], [2, 0]])
 
 
 def test_voxel_probability_matches_equal_distance_correction(tmp_path):

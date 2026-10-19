@@ -8,6 +8,7 @@ import pandas as pd
 import scipy
 from sklearn.feature_selection import mutual_info_regression
 
+from cross_species_3d import analysis as analysis_3d
 from utils_function import cf
 from utils_function import utils_function as uf
 
@@ -451,7 +452,13 @@ class PaperFig:
             animal_info = self.animal_info_by_name[name]
             axes = axes_by_name[name]
             plot_data_uniform_angle_distribution(axes[0], animal_info.angle_2D, self.data_matrix_by_name[name], self.minimal_tol_by_name[name])
-            plot_data_model_angle_distribution(axes[1:], self.data_matrix_by_name[name], self.masked_model_matrix_by_name[name], self.minimal_tol_by_name[name], animal_info.angle_3D['azim'], animal_info.angle_3D['elev'])
+            angle_3d = animal_info.angle_3D
+            source_names = angle_3d['azim'].index
+            target_names = angle_3d['azim'].columns
+            data_3d = self.data_matrix_by_name[name].loc[source_names, target_names]
+            model_3d = self.masked_model_matrix_by_name[name].loc[source_names, target_names]
+            positive_values = data_3d.values[data_3d.values > 0]
+            plot_data_model_angle_distribution(axes[1:], data_3d, model_3d, np.min(positive_values), angle_3d['azim'], angle_3d['elev'])
         first_axes = axes_by_name[self.dataset_name_list[0]]
         cf.plt_bar(first_axes[1], [0], [0], label='Data', color=uf.DATA_COLOR)
         cf.set_ax(first_axes[1], legend_loc='lower left', bbox_to_anchor=(0, 1.4))
@@ -592,7 +599,11 @@ class PaperFig:
         for name in self.dataset_name_list:
             animal_info = self.animal_info_by_name[name]
             axes = axes_by_name[name]
-            plot_2d_3d_distance_scatter(axes[0], animal_info.distance_2D, animal_info.distance_3D)
+            if name == 'mouse_gamanut':
+                distance_2d, distance_3d = analysis_3d.get_mouse_allen_distance_matrices()
+            else:
+                distance_2d, distance_3d = animal_info.distance_2D, animal_info.distance_3D
+            plot_2d_3d_distance_scatter(axes[0], distance_2d, distance_3d)
             plot_distance_distribution(axes[1], animal_info.distance_2D, self.data_matrix_by_name[name], self.minimal_tol_by_name[name], 'data', linregress=True)
         add_multi_panel_tags(axes_by_name, self.dataset_name_list)
         add_multi_panel_titles(subfigures, self.dataset_name_list, self.animal_list)

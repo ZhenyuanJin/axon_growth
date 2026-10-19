@@ -29,6 +29,15 @@ def load_json(path):
         return json.load(file)
 
 
+def get_mouse_allen_distance_matrices():
+    """Return aligned Gamanut 2D and Allen CCF2017 3D distances for common regions."""
+    info = uf.AnimalInfo("mouse", "gamanut")
+    distance_3d = info.distance_3D
+    area_names = distance_3d.index
+    distance_2d = info.distance_2D.loc[area_names, area_names]
+    return distance_2d, distance_3d
+
+
 def get_connectivity_path(run_dir, dataset_name, dimension):
     """Return the saved comparison matrix for one final seed."""
     run_dir = Path(run_dir)

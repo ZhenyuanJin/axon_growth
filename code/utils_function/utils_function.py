@@ -1,5 +1,6 @@
 
 
+import json
 import os
 import re
 from collections import defaultdict
@@ -110,16 +111,19 @@ def get_area_voxel_3D(animal, dataset_key):
     full_name = animal_info.full_name
     area_voxel_dict = {}
     if animal=='mouse' and dataset_key=='gamanut':
-        atlas = np.load(animal_info.raw_3D_data_dir+'/modified_data.npy')
-        areas = pd.read_excel(animal_info.raw_3D_data_dir+'/areas.xlsx')
-        modified_area_to_index = {}
-        for idx in areas.index:
-            modified_area_to_index[areas.loc[idx, 'area_name']] = idx + 1
-        for brain_area in full_name:
-
-            s = modified_area_to_index[brain_area]
-            voxels = np.array(np.where(atlas==s)).T * 0.025
-            area_voxel_dict[brain_area] = voxels
+        cache_dir = PROJECT_ROOT / 'results' / 'cross_species_3d' / 'preprocessing' / 'mouse_gamanut' / 'common_regions'
+        required_paths = [cache_dir / 'metadata.json', cache_dir / 'coordinates_mm.npy', cache_dir / 'area_ids.npy']
+        missing_paths = [str(path) for path in required_paths if not path.exists()]
+        if missing_paths:
+            raise FileNotFoundError('Run code/cross_species_3d/preprocess.py before loading mouse 3D data. Missing:\n' + '\n'.join(missing_paths))
+        with (cache_dir / 'metadata.json').open(encoding='utf-8') as file:
+            metadata = json.load(file)
+        coordinates = np.load(cache_dir / 'coordinates_mm.npy', mmap_mode='r')
+        area_ids = np.load(cache_dir / 'area_ids.npy', mmap_mode='r')
+        area_voxel_dict = {
+            area_name: np.asarray(coordinates[area_ids == area_id])
+            for area_id, area_name in enumerate(metadata['area_names'])
+        }
     if animal=='marmoset' and dataset_key=='majka':
         def indices_to_mm(repeated_indices, affine):
             return np.array([repeated_indices[:, 0]*(-affine[0, 0])-affine[0, 3], repeated_indices[:, 1]*(-affine[1, 1])-affine[1, 3], repeated_indices[:, 2]*affine[2, 2]+affine[2, 3]]).T
@@ -213,7 +217,7 @@ def generate_angle_matrix(animal, dataset_key, dim='2D'):
         cf.save_pkl(angle_matrix, animal_info.angle_matrix_dir + 'angle_matrix_2D')
     else:
         area_center_dict_3D = animal_info.area_center_dict_3D
-        full_name = animal_info.full_name
+        full_name = list(area_center_dict_3D)
         azim_matrix = pd.DataFrame(np.zeros([len(full_name), len(full_name)]), index=full_name, columns=full_name)
         elev_matrix = pd.DataFrame(np.zeros([len(full_name), len(full_name)]), index=full_name, columns=full_name)
         for i, center_i in area_center_dict_3D.items():
@@ -237,7 +241,7 @@ def generate_distance_matrix(animal, dataset_key, dim='2D'):
         cf.save_pkl(distance_matrix, animal_info.distance_matrix_dir + 'distance_matrix_2D')
     else:
         area_center_dict_3D = animal_info.area_center_dict_3D
-        full_name = animal_info.full_name
+        full_name = list(area_center_dict_3D)
         distance_matrix = pd.DataFrame(np.zeros([len(full_name), len(full_name)]), index=full_name, columns=full_name)
         for i, center_i in area_center_dict_3D.items():
             for j, center_j in area_center_dict_3D.items():
@@ -1546,8 +1550,8 @@ def get_connection_generation_results(config, output_dir, worker_count=None, for
 def area_EDR_3d_connection_generation(animal, dataset_key, Lambda):
     animal_info = AnimalInfo(animal, dataset_key)
     area_center_dict_3D = animal_info.area_center_dict_3D
-
-    CCMt = animal_info.SC_data.copy()
+    area_names = list(area_center_dict_3D)
+    CCMt = animal_info.SC_data.loc[area_names, area_names].copy()
     for source_area in area_center_dict_3D.keys():
         source_center = np.array(area_center_dict_3D[source_area])
         for target_area in area_center_dict_3D.keys():
@@ -1685,6 +1689,17 @@ def calculate_probability_matrix(binary_adj_pd, distance_3D, Lambda, gamma, shif
     )
 
 
+def get_matrix_aligned_to_distance(matrix, distance_matrix):
+    """Return a matrix restricted and ordered to a square distance matrix."""
+    if not distance_matrix.index.equals(distance_matrix.columns):
+        raise ValueError('The distance matrix must have identical row and column labels.')
+    missing = sorted(set(distance_matrix.index) - set(matrix.index))
+    missing += sorted(set(distance_matrix.columns) - set(matrix.columns))
+    if missing:
+        raise ValueError(f'Matrix is missing distance regions: {sorted(set(missing))}')
+    return matrix.loc[distance_matrix.index, distance_matrix.columns]
+
+
 def add_new_connection(binary_adj_pd, prob_matrix, rng):
     area_num = binary_adj_pd.shape[0]
     flat_probs = prob_matrix.values.flatten()
@@ -1711,15 +1726,13 @@ def betzel_like_connection_generation(animal, dataset_key, Lambda, gamma, init_c
 
 
     distance_3D = animal_info.distance_3D
-    SC_data = animal_info.SC_data
-
-
-    assert distance_3D.index.equals(SC_data.index) and distance_3D.columns.equals(SC_data.columns), "Distance matrix and SC data must have the same index and columns."
+    SC_data = get_matrix_aligned_to_distance(animal_info.SC_data, distance_3D)
 
 
     if final_connection_density is None:
-        final_connection_density = get_connection_density(SC_data, animal, dataset_key)
-    area_num = len(animal_info.full_name)
+        off_diagonal = ~np.eye(len(SC_data), dtype=bool)
+        final_connection_density = np.mean(SC_data.values[off_diagonal] > 0)
+    area_num = len(distance_3D)
     final_connection_num = int(area_num * (area_num - 1) / 2 * final_connection_density)
 
 
@@ -1740,10 +1753,7 @@ def chen_like_weighted_assignment(animal, dataset_key, Lambda, gamma, binary_adj
 
 
     distance_3D = animal_info.distance_3D
-    SC_data = animal_info.SC_data
-
-
-    assert distance_3D.index.equals(SC_data.index) and distance_3D.columns.equals(SC_data.columns), "Distance matrix and SC data must have the same index and columns."
+    binary_adj_pd = get_matrix_aligned_to_distance(binary_adj_pd, distance_3D)
 
     prob_matrix = calculate_probability_matrix(binary_adj_pd, distance_3D, Lambda, gamma, set_existing_to_zero=False, shift=shift)
 
@@ -1757,10 +1767,8 @@ def adapted_chen_like_weighted_assignment(animal, dataset_key, Lambda, gamma, bi
 
 
     distance_3D = animal_info.distance_3D
-    SC_data = animal_info.SC_data
-
-
-    assert distance_3D.index.equals(SC_data.index) and distance_3D.columns.equals(SC_data.columns), "Distance matrix and SC data must have the same index and columns."
+    binary_adj_pd = get_matrix_aligned_to_distance(binary_adj_pd, distance_3D)
+    true_binary_adj_pd = get_matrix_aligned_to_distance(true_binary_adj_pd, distance_3D)
 
     prob_matrix = calculate_probability_matrix(binary_adj_pd, distance_3D, Lambda, gamma, set_existing_to_zero=False, shift=shift)
 
@@ -2251,15 +2259,16 @@ def get_category_longrange_connection(SC_data, animal, dataset_key, longrange_th
         distance_matrix = animal_info.distance_2D
     elif dim == '3D':
         distance_matrix = animal_info.distance_3D
+        SC_data = get_matrix_aligned_to_distance(SC_data, distance_matrix)
 
     longrange_SC_data = SC_data[distance_matrix > longrange_threshold]
 
     longrange_connection_sum = {}
     longrange_possible_sum = {}
 
-    for source in animal_info.source_name:
+    for source in longrange_SC_data.index:
         source_category = animal_info.area_category[source]
-        for target in animal_info.target_name:
+        for target in longrange_SC_data.columns:
             target_category = animal_info.area_category[target]
             if source_category != target_category:
                 longrange_possible_sum[source_category] = longrange_possible_sum.get(source_category, 0) + 1
@@ -2332,7 +2341,7 @@ def get_injection_deviation_rate(animal, dataset_key, mode='2D'):
             area_center_dict = animal_info.area_center_dict_3D
             injection_site = animal_info.injection_site_3D
             radius = get_radius(mode)
-            for area in target_name:
+            for area in [name for name in target_name if name in area_center_dict and name in injection_site]:
                 distance = []
                 for inj in injection_site[area]:
                     distance.append(np.linalg.norm(area_center_dict[area]-inj))
@@ -2386,6 +2395,7 @@ def connection_proportion_inside_threshold(threshold_list, animal, dataset_key, 
         distance_matrix = animal_info.distance_2D
     elif distance_mode == '3D':
         distance_matrix = animal_info.distance_3D
+        processesd_SC_data = get_matrix_aligned_to_distance(processesd_SC_data, distance_matrix)
     sum_SC = np.nansum(processesd_SC_data.values)
     proportion_list = []
     for threshold in threshold_list:
