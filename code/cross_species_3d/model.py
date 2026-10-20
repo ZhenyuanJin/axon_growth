@@ -1101,6 +1101,38 @@ def run_distance_metric_comparison():
     return combined
 
 
+def run_human_distance_lambda_control():
+    """Run the human Euclidean/geodesic distance by optimal-lambda control."""
+    dataset_name = "human_lariviere"
+    comparison_dir = MODELS_DIR / "distance_metric_comparison" / dataset_name
+    optimal_lambdas = {
+        metric: float(_load_json(comparison_dir / metric / "optimal_parameters.json")["best_lambda"])
+        for metric in ["euclidean", "geodesic"]
+    }
+    lambda_values = [optimal_lambdas["euclidean"], optimal_lambdas["geodesic"]]
+    summaries = []
+    for distance_metric in ["euclidean", "geodesic"]:
+        cache_dir = PREPROCESSING_DIR / dataset_name / "full_pair_distances" / f"{distance_metric}_catalog"
+        output_dir = MODELS_DIR / "distance_lambda_control" / dataset_name / distance_metric
+        tasks = get_task_table(
+            dataset_name, lambda_values, FINAL_SEEDS, FINAL_CONNECTION_COUNT, "control"
+        )
+        for task in tasks:
+            task["distance_metric"] = distance_metric
+        summary = run_distance_metric_stage(tasks, cache_dir, output_dir)
+        summary["lambda_source"] = np.where(
+            np.isclose(summary["Lambda"], optimal_lambdas["euclidean"]),
+            "Euclidean-optimal lambda",
+            "Geodesic-optimal lambda",
+        )
+        summaries.append(summary)
+    combined = pd.concat(summaries, ignore_index=True)
+    output_path = MODELS_DIR / "distance_lambda_control" / dataset_name / "summary.csv"
+    combined.to_csv(output_path, index=False)
+    _save_json(optimal_lambdas, output_path.parent / "lambda_values.json")
+    return combined
+
+
 def _run_2d_task(task):
     model = uf.get_connection_generation_results(task["config"], MODELS_DIR / "2d_runs")
     animal = task["config"]["animal"]
@@ -1182,6 +1214,7 @@ def main():
     combined = pd.concat(summaries, ignore_index=True)
     combined.to_csv(MODELS_DIR / "optimal_seed_correlations.csv", index=False)
     run_distance_metric_comparison()
+    run_human_distance_lambda_control()
 
 
 if __name__ == "__main__":

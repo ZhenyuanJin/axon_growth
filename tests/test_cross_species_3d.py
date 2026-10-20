@@ -251,3 +251,54 @@ def test_seed_rmae_summary_averages_errors_after_each_seed():
     assert np.isclose(summary.loc[0, "rmae_2d_mean"], 2)
     assert np.isclose(summary.loc[0, "rmae_3d_mean"], 4)
     assert np.isclose(summary.loc[0, "rmae_2d_std"], np.std(np.arange(5), ddof=1))
+
+
+def test_geodesic_distance_rmae_uses_shared_pairs_and_bins(monkeypatch):
+    names = ["A", "B", "C", "D"]
+    row, column = np.triu_indices(len(names), k=1)
+    pair_table = pd.DataFrame({
+        "source_area": np.asarray(names)[row],
+        "target_area": np.asarray(names)[column],
+        "geodesic_distance_mm": np.asarray([5, 15, 25, 35, 45, 55], dtype=float),
+    })
+    matrix = pd.DataFrame(np.ones((4, 4)), index=names, columns=names)
+    error_euclidean = pd.DataFrame(np.arange(16).reshape(4, 4), index=names, columns=names)
+    returned = iter([error_euclidean, error_euclidean + 2])
+    monkeypatch.setattr(analysis.uf, "data_model_relative_error", lambda *args, **kwargs: next(returned))
+    existing = pd.DataFrame(False, index=names, columns=names)
+    existing.values[row[:3], column[:3]] = True
+    non_link = pd.DataFrame(False, index=names, columns=names)
+    non_link.values[row[3:], column[3:]] = True
+    monkeypatch.setattr(
+        analysis.uf, "get_weight_category_mask",
+        lambda *args, **kwargs: {"all": existing, "non": non_link},
+    )
+    result = analysis.get_geodesic_distance_binned_rmae(
+        pair_table, matrix, matrix, matrix, np.asarray([0, 20, 40, 60])
+    )
+    existing_result = result[result["link_category"] == "existing"]
+    non_link_result = result[result["link_category"] == "non-link"]
+    assert np.allclose(
+        existing_result["geodesic_distance_mean_mm"],
+        non_link_result["geodesic_distance_mean_mm"],
+    )
+    occupied = result["pair_count"] > 0
+    assert np.allclose(
+        result.loc[occupied, "rmae_geodesic"] - result.loc[occupied, "rmae_euclidean"], 2
+    )
+
+
+def test_distance_matrix_similarity_uses_unique_area_pairs():
+    names = ["A", "B", "C"]
+    first = pd.DataFrame(
+        [[0, 1, 2], [1, 0, 3], [2, 3, 0]], index=names, columns=names
+    )
+    second = first * 2
+    third = pd.DataFrame(
+        [[0, 3, 2], [3, 0, 1], [2, 1, 0]], index=names, columns=names
+    )
+    similarity = analysis.get_distance_matrix_similarity({
+        "first": first, "second": second, "third": third,
+    })
+    assert np.isclose(similarity.loc["first", "second"], 1)
+    assert np.isclose(similarity.loc["first", "third"], -1)

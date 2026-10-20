@@ -19,6 +19,7 @@ ANALYSIS_DIR = OUTPUT_DIR / "analysis"
 FIGURES_DIR = OUTPUT_DIR / "figures"
 SPECIES_ORDER = ["Mouse", "Marmoset", "Macaque", "Human"]
 RMAE_BIN_COUNT = {"macaque_markov40": 20, "human_lariviere": 10}
+HUMAN_GEODESIC_RMAE_BIN_WIDTH_MM = 20.0
 DISTANCE_DISTRIBUTION_BIN_COUNT = 40
 DISTANCE_DISTRIBUTION_CONNECTION_COUNT = 8_000_000
 DISTANCE_DISTRIBUTION_SEEDS = range(5)
@@ -96,6 +97,25 @@ def load_seed_comparison_matrices(animal, dataset_key):
     return data, model_2d, model_3d
 
 
+def load_distance_metric_seed_matrices(dataset_name, distance_metric):
+    """Load five optimal full-pair EDR matrices for one distance metric."""
+    best_dir = MODELS_DIR / "distance_metric_comparison" / dataset_name / distance_metric / "best"
+    summary = pd.read_csv(best_dir / "summary.csv").sort_values("seed")
+    expected_seeds = list(range(5))
+    seeds = summary["seed"].astype(int).tolist()
+    if seeds != expected_seeds:
+        raise ValueError(f"Expected {distance_metric} seeds {expected_seeds}, found {seeds}.")
+    filename = "CCMe_sym_normalized.csv" if dataset_name == "human_lariviere" else "FLNe.csv"
+    matrices = {
+        int(row.seed): pd.read_csv(Path(row.run_dir) / "connectivity" / filename, index_col=0)
+        for row in summary.itertuples()
+    }
+    reference = matrices[expected_seeds[0]]
+    if any(not matrix.index.equals(reference.index) or not matrix.columns.equals(reference.columns) for matrix in matrices.values()):
+        raise ValueError(f"Unaligned {distance_metric} matrices for {dataset_name}.")
+    return matrices
+
+
 def get_full_pair_area_distance_means(dataset_name):
     """Return full-pair area means from fixed-width distance catalogs."""
     root = PREPROCESSING_DIR / dataset_name / "full_pair_distances"
@@ -126,7 +146,59 @@ def get_human_pair_table():
     ratio = geodesic_mean[row, column] / euclidean_mean[row, column]
     if np.any(~np.isfinite(ratio)) or np.any(ratio < 1):
         raise ValueError("Invalid human geodesic-to-Euclidean area-pair ratios.")
-    return pd.DataFrame({"source_area": names[row], "target_area": names[column], "geodesic_to_euclidean_ratio": ratio})
+    return pd.DataFrame({
+        "source_area": names[row],
+        "target_area": names[column],
+        "euclidean_distance_mm": euclidean_mean[row, column],
+        "geodesic_distance_mm": geodesic_mean[row, column],
+        "geodesic_to_euclidean_ratio": ratio,
+    })
+
+
+def get_human_center_distance_matrices():
+    """Return aligned 2D, 3D Euclidean, and surface-geodesic center distances."""
+    dataset_name = "human_lariviere"
+    cache_dir = PREPROCESSING_DIR / dataset_name / "full_pair_distances"
+    metadata = load_json(cache_dir / "metadata.json")
+    names = list(metadata["area_names"])
+    coordinates = np.load(cache_dir / "coordinates.npy", mmap_mode="r")
+    area_ids = np.load(cache_dir / "area_ids.npy", mmap_mode="r")
+    graph = scipy.sparse.load_npz(cache_dir / "largest_component_graph.npz")
+    center_indices = []
+    for area_id in range(len(names)):
+        local_indices = np.flatnonzero(area_ids == area_id)
+        if len(local_indices) == 0:
+            raise ValueError(f"Human area {names[area_id]} has no surface vertices.")
+        centroid = np.mean(coordinates[local_indices], axis=0)
+        local_center = int(np.argmin(np.linalg.norm(coordinates[local_indices] - centroid, axis=1)))
+        center_indices.append(int(local_indices[local_center]))
+    center_indices = np.asarray(center_indices, dtype=np.int32)
+    center_coordinates = np.asarray(coordinates[center_indices], dtype=np.float64)
+    euclidean_3d = scipy.spatial.distance.cdist(center_coordinates, center_coordinates)
+    geodesic_3d = scipy.sparse.csgraph.dijkstra(
+        graph, directed=False, indices=center_indices, return_predecessors=False
+    )[:, center_indices]
+    if not np.all(np.isfinite(geodesic_3d)) or np.any(geodesic_3d + 1e-10 < euclidean_3d):
+        raise ValueError("Invalid human center geodesic distances.")
+    info = uf.AnimalInfo("human", "lariviere")
+    distance_2d = info.distance_2D.loc[names, names].astype(float)
+    matrices = {
+        "2D Euclidean": distance_2d,
+        "3D Euclidean": pd.DataFrame(euclidean_3d, index=names, columns=names),
+        "3D geodesic": pd.DataFrame(geodesic_3d, index=names, columns=names),
+    }
+    return center_indices, matrices
+
+
+def get_distance_matrix_similarity(distance_matrices):
+    """Return pairwise Pearson correlations across aligned upper triangles."""
+    labels = list(distance_matrices)
+    first = distance_matrices[labels[0]]
+    if any(not matrix.index.equals(first.index) or not matrix.columns.equals(first.columns) for matrix in distance_matrices.values()):
+        raise ValueError("Center-distance matrices are not aligned.")
+    row, column = np.triu_indices(len(first), k=1)
+    vectors = np.asarray([distance_matrices[label].values[row, column] for label in labels])
+    return pd.DataFrame(np.corrcoef(vectors), index=labels, columns=labels)
 
 
 def get_macaque_pair_table():
@@ -197,6 +269,149 @@ def get_seed_rmae_summary(seed_table):
     ).reset_index()
     if not np.all(summary["seed_count"] == 5):
         raise ValueError("Every RMAE bin must contain five independently computed seeds.")
+    return summary
+
+
+def get_geodesic_distance_binned_error(pair_table, relative_error, bin_edges):
+    """Return one model's pairwise relative error on fixed geodesic-distance bins."""
+    source_index = relative_error.index.get_indexer(pair_table["source_area"])
+    target_index = relative_error.columns.get_indexer(pair_table["target_area"])
+    if np.any(source_index < 0) or np.any(target_index < 0):
+        raise ValueError("Human area-pair names are not aligned with the RMAE matrices.")
+    distances = pair_table["geodesic_distance_mm"].to_numpy(dtype=np.float64)
+    error = relative_error.values[source_index, target_index]
+    if not np.all(np.isfinite(distances)) or not np.all(np.isfinite(error)):
+        raise ValueError("Geodesic distances and pairwise relative errors must be finite.")
+    bin_edges = np.asarray(bin_edges, dtype=np.float64)
+    if np.any(np.diff(bin_edges) <= 0) or distances.min() < bin_edges[0] or distances.max() > bin_edges[-1]:
+        raise ValueError("Geodesic-distance bin edges do not cover all area pairs.")
+    bin_count = len(bin_edges) - 1
+    bin_id = np.clip(np.searchsorted(bin_edges, distances, side="right") - 1, 0, bin_count - 1)
+    pooled_distance_mean = np.asarray([
+        np.mean(distances[bin_id == local_bin]) if np.any(bin_id == local_bin) else np.nan
+        for local_bin in range(bin_count)
+    ])
+    masks = uf.get_weight_category_mask("human", "lariviere", diagonal=False)
+    rows = []
+    for category_label, category_key in [("existing", "all"), ("non-link", "non")]:
+        category = masks[category_key].values[source_index, target_index]
+        for local_bin in range(bin_count):
+            selected = category & (bin_id == local_bin)
+            pair_count = int(np.sum(selected))
+            rows.append({
+                "link_category": category_label,
+                "bin": local_bin + 1,
+                "distance_left_mm": float(bin_edges[local_bin]),
+                "geodesic_distance_mean_mm": float(pooled_distance_mean[local_bin]),
+                "distance_right_mm": float(bin_edges[local_bin + 1]),
+                "pair_count": pair_count,
+                "rmae": float(np.mean(error[selected])) if pair_count else np.nan,
+            })
+    return pd.DataFrame(rows)
+
+
+def get_geodesic_distance_binned_rmae(pair_table, data, euclidean_model, geodesic_model, bin_edges):
+    """Return human Euclidean/geodesic model RMAE on shared geodesic bins."""
+    tables = []
+    for label, matrix in [("euclidean", euclidean_model), ("geodesic", geodesic_model)]:
+        relative_error = uf.data_model_relative_error(
+            data, matrix, "human", "lariviere", diagonal=False
+        )
+        local = get_geodesic_distance_binned_error(pair_table, relative_error, bin_edges)
+        local["distance_metric"] = label
+        tables.append(local)
+    long_table = pd.concat(tables, ignore_index=True)
+    index_columns = [
+        "link_category", "bin", "distance_left_mm", "geodesic_distance_mean_mm",
+        "distance_right_mm", "pair_count",
+    ]
+    result = long_table.pivot(index=index_columns, columns="distance_metric", values="rmae").reset_index()
+    result.columns.name = None
+    return result.rename(columns={"euclidean": "rmae_euclidean", "geodesic": "rmae_geodesic"})
+
+
+def get_geodesic_distance_rmae_summary(seed_table):
+    """Average independently computed human distance-bin RMAEs across seeds."""
+    group_columns = [
+        "link_category", "bin", "distance_left_mm", "geodesic_distance_mean_mm",
+        "distance_right_mm", "pair_count",
+    ]
+    summary = seed_table.groupby(group_columns, sort=False, dropna=False).agg(
+        seed_count=("seed", "nunique"),
+        rmae_euclidean_mean=("rmae_euclidean", "mean"),
+        rmae_euclidean_std=("rmae_euclidean", "std"),
+        rmae_geodesic_mean=("rmae_geodesic", "mean"),
+        rmae_geodesic_std=("rmae_geodesic", "std"),
+    ).reset_index()
+    if not np.all(summary["seed_count"] == 5):
+        raise ValueError("Every geodesic-distance RMAE bin must contain five seeds.")
+    summary["rmae_difference_mean"] = summary["rmae_geodesic_mean"] - summary["rmae_euclidean_mean"]
+    return summary
+
+
+def get_human_distance_lambda_control_summary():
+    """Return seed and aggregate metrics for the human distance-by-lambda control."""
+    path = MODELS_DIR / "distance_lambda_control" / "human_lariviere" / "summary.csv"
+    control = pd.read_csv(path).sort_values(["distance_metric", "Lambda", "seed"])
+    info = uf.AnimalInfo("human", "lariviere")
+    data = info.SC_data.loc[info.full_name, info.full_name]
+    masks = uf.get_weight_category_mask("human", "lariviere", diagonal=False)
+    rows = []
+    for result in control.itertuples():
+        matrix = pd.read_csv(Path(result.run_dir) / "connectivity" / "CCMe_sym_normalized.csv", index_col=0)
+        matrix = matrix.loc[info.full_name, info.full_name]
+        relative_error = uf.data_model_relative_error(
+            data, matrix, "human", "lariviere", diagonal=False
+        )
+        row = result._asdict()
+        for label, key in [("existing", "all"), ("non_link", "non")]:
+            mask = masks[key].loc[info.full_name, info.full_name].values
+            row[f"rmae_{label}"] = float(np.nansum(relative_error.values * mask) / np.sum(mask))
+        rows.append(row)
+    seed_summary = pd.DataFrame(rows)
+    group_columns = ["distance_metric", "lambda_source", "Lambda"]
+    aggregate = seed_summary.groupby(group_columns, sort=False).agg(
+        seed_count=("seed", "nunique"),
+        correlation_mean=("correlation", "mean"),
+        correlation_std=("correlation", "std"),
+        rmae_existing_mean=("rmae_existing", "mean"),
+        rmae_existing_std=("rmae_existing", "std"),
+        rmae_non_link_mean=("rmae_non_link", "mean"),
+        rmae_non_link_std=("rmae_non_link", "std"),
+    ).reset_index()
+    if len(aggregate) != 4 or not np.all(aggregate["seed_count"] == 5):
+        raise ValueError("Human distance-by-lambda control must contain four conditions and five seeds.")
+    return seed_summary, aggregate
+
+
+def get_human_distance_lambda_control_binned_rmae(pair_table, data, control, bin_edges):
+    """Return per-seed RMAE for all human distance-by-lambda conditions on shared bins."""
+    rows = []
+    for result in control.itertuples():
+        matrix = pd.read_csv(Path(result.run_dir) / "connectivity" / "CCMe_sym_normalized.csv", index_col=0)
+        relative_error = uf.data_model_relative_error(
+            data, matrix, "human", "lariviere", diagonal=False
+        )
+        local = get_geodesic_distance_binned_error(pair_table, relative_error, bin_edges)
+        local["distance_metric"] = result.distance_metric
+        local["lambda_source"] = result.lambda_source
+        local["Lambda"] = result.Lambda
+        local["seed"] = result.seed
+        rows.append(local)
+    return pd.concat(rows, ignore_index=True)
+
+
+def get_human_distance_lambda_control_binned_summary(seed_table):
+    """Average independently computed distance-by-lambda RMAEs across five seeds."""
+    group_columns = [
+        "distance_metric", "lambda_source", "Lambda", "link_category", "bin",
+        "distance_left_mm", "geodesic_distance_mean_mm", "distance_right_mm", "pair_count",
+    ]
+    summary = seed_table.groupby(group_columns, sort=False, dropna=False).agg(
+        seed_count=("seed", "nunique"), rmae_mean=("rmae", "mean"), rmae_std=("rmae", "std")
+    ).reset_index()
+    if not np.all(summary["seed_count"] == 5):
+        raise ValueError("Every distance-by-lambda RMAE bin must contain five seeds.")
     return summary
 
 
@@ -335,6 +550,103 @@ def plot_rmae(binned, output_path):
     cf.save_fig(fig, str(output_path), formats=["png", "pdf"], pkl=False)
 
 
+def plot_human_geodesic_distance_rmae(binned, output_path):
+    """Plot human optimal-model RMAE on shared surface-geodesic bins."""
+    fig, ax = cf.get_fig_ax()
+    for category, marker, linestyle in [("existing", "o", "-"), ("non-link", "s", "--")]:
+        table = binned[binned["link_category"] == category]
+        x = table["geodesic_distance_mean_mm"].to_numpy()
+        _plot_finite_segments(
+            ax, x, table["rmae_euclidean_mean"].to_numpy(), f"Euclidean {category}",
+            color=cf.BLUE, marker=marker, linestyle=linestyle,
+        )
+        _plot_finite_segments(
+            ax, x, table["rmae_geodesic_mean"].to_numpy(), f"Geodesic {category}",
+            color=cf.ORANGE, marker=marker, linestyle=linestyle,
+        )
+    cf.set_ax(
+        ax, xlabel="Mean surface geodesic distance (mm)", ylabel="RMAE",
+        legend_loc="lower center", bbox_to_anchor=(0.5, 1.0), legend_kwargs={"ncols": 2},
+    )
+    cf.save_fig(fig, str(output_path), formats=["png", "pdf"], pkl=False)
+
+
+def plot_human_distance_lambda_control(summary, output_path):
+    """Plot correlation and category RMAE for the four controlled conditions."""
+    lambda_order = ["Euclidean-optimal lambda", "Geodesic-optimal lambda"]
+    x = np.arange(4, dtype=np.float64)
+    xtick_label = ["λE", "λG", "λE", "λG"]
+    fig, axes = cf.get_fig_ax(ncols=3)
+    panels = [
+        ("correlation_mean", "correlation_std", "Pearson correlation"),
+        ("rmae_existing_mean", "rmae_existing_std", "RMAE (existing links)"),
+        ("rmae_non_link_mean", "rmae_non_link_std", "RMAE (non-links)"),
+    ]
+    ordered = summary.set_index(["distance_metric", "lambda_source"])
+    for ax, (mean_column, std_column, ylabel) in zip(axes, panels):
+        euclidean = ordered.loc[[("euclidean", label) for label in lambda_order]]
+        geodesic = ordered.loc[[("geodesic", label) for label in lambda_order]]
+        cf.plt_bar(
+            ax, x[:2], euclidean[mean_column].to_numpy(), label="Euclidean distance",
+            color=cf.BLUE, err=euclidean[std_column].to_numpy(),
+        )
+        cf.plt_bar(
+            ax, x[2:], geodesic[mean_column].to_numpy(), label="Geodesic distance",
+            color=cf.ORANGE, err=geodesic[std_column].to_numpy(),
+        )
+        cf.set_ax(ax, xlabel="", ylabel=ylabel, xtick=x, xtick_label=xtick_label, legend=False)
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="upper center", ncols=2)
+    cf.save_fig(fig, str(output_path), formats=["png", "pdf"], pkl=False)
+
+
+def plot_human_distance_lambda_control_binned_rmae(binned, output_path):
+    """Plot the four human distance-by-lambda conditions on shared geodesic bins."""
+    lambda_order = ["Euclidean-optimal lambda", "Geodesic-optimal lambda"]
+    styles = {
+        ("euclidean", lambda_order[0]): (cf.BLUE, "o", "-", "Euclidean, λE"),
+        ("euclidean", lambda_order[1]): (cf.BLUE, "s", "--", "Euclidean, λG"),
+        ("geodesic", lambda_order[0]): (cf.ORANGE, "o", "-", "Geodesic, λE"),
+        ("geodesic", lambda_order[1]): (cf.ORANGE, "s", "--", "Geodesic, λG"),
+    }
+    fig, axes = cf.get_fig_ax(ncols=2)
+    for ax, category, title in zip(axes, ["existing", "non-link"], ["Existing links", "Non-links"]):
+        category_table = binned[binned["link_category"] == category]
+        for condition, (color, marker, linestyle, label) in styles.items():
+            distance_metric, lambda_source = condition
+            table = category_table[
+                (category_table["distance_metric"] == distance_metric)
+                & (category_table["lambda_source"] == lambda_source)
+            ].sort_values("bin")
+            _plot_finite_segments(
+                ax, table["geodesic_distance_mean_mm"].to_numpy(), table["rmae_mean"].to_numpy(),
+                label, color=color, marker=marker, linestyle=linestyle,
+            )
+        cf.set_ax(
+            ax, xlabel="Mean surface geodesic distance (mm)", ylabel="RMAE",
+            title=title, legend=False,
+        )
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="upper center", ncols=4)
+    cf.save_fig(fig, str(output_path), formats=["png", "pdf"], pkl=False)
+
+
+def plot_human_center_distance_similarity(similarity, output_path):
+    """Plot annotated correlations among human center-distance matrices."""
+    display = similarity.copy()
+    display_labels = ["2D", "3D\nEuclidean", "3D\ngeodesic"]
+    display.index = display_labels
+    display.columns = display_labels
+    fig, ax = cf.get_fig_ax()
+    cf.sns_heatmap(
+        ax, display, cmap=cf.get_cmap([cf.WHITE, cf.RED]), vmin=0, vmax=1,
+        xtick_rotation=0, ytick_rotation=0,
+        heatmap_kwargs={"annot": True, "fmt": ".2f", "annot_kws": {"fontsize": cf.TICK_SIZE}},
+    )
+    cf.set_ax(ax, xlabel="", ylabel="")
+    cf.save_fig(fig, str(output_path), formats=["png", "pdf"], pkl=False)
+
+
 def plot_distance_distribution_validation(validation, output_path):
     """Plot sampled and analytical EDR probability per native distance class."""
     fig, axes = cf.get_fig_ax(nrows=2, ncols=2)
@@ -418,6 +730,60 @@ def main():
     binned = get_seed_rmae_summary(seed_binned)
     binned.to_csv(ANALYSIS_DIR / "geodesic_ratio_rmae.csv", index=False)
     plot_rmae(binned, FIGURES_DIR / "geodesic_ratio_rmae")
+    human_pairs = get_human_pair_table()
+    maximum_geodesic = float(human_pairs["geodesic_distance_mm"].max())
+    geodesic_edges = np.arange(
+        0.0,
+        np.ceil(maximum_geodesic / HUMAN_GEODESIC_RMAE_BIN_WIDTH_MM) * HUMAN_GEODESIC_RMAE_BIN_WIDTH_MM
+        + HUMAN_GEODESIC_RMAE_BIN_WIDTH_MM,
+        HUMAN_GEODESIC_RMAE_BIN_WIDTH_MM,
+    )
+    euclidean_models = load_distance_metric_seed_matrices("human_lariviere", "euclidean")
+    geodesic_models = load_distance_metric_seed_matrices("human_lariviere", "geodesic")
+    human_data = uf.AnimalInfo("human", "lariviere").SC_data
+    geodesic_seed_tables = []
+    for seed in range(5):
+        local = get_geodesic_distance_binned_rmae(
+            human_pairs, human_data, euclidean_models[seed], geodesic_models[seed], geodesic_edges
+        )
+        local["seed"] = seed
+        geodesic_seed_tables.append(local)
+    geodesic_seed_rmae = pd.concat(geodesic_seed_tables, ignore_index=True)
+    geodesic_seed_rmae.to_csv(ANALYSIS_DIR / "human_geodesic_distance_rmae_by_seed.csv", index=False)
+    geodesic_rmae = get_geodesic_distance_rmae_summary(geodesic_seed_rmae)
+    geodesic_rmae.to_csv(ANALYSIS_DIR / "human_geodesic_distance_rmae.csv", index=False)
+    plot_human_geodesic_distance_rmae(
+        geodesic_rmae, FIGURES_DIR / "human_geodesic_distance_rmae"
+    )
+    control_seed, control_summary = get_human_distance_lambda_control_summary()
+    control_seed.to_csv(ANALYSIS_DIR / "human_distance_lambda_control_by_seed.csv", index=False)
+    control_summary.to_csv(ANALYSIS_DIR / "human_distance_lambda_control.csv", index=False)
+    plot_human_distance_lambda_control(
+        control_summary, FIGURES_DIR / "human_distance_lambda_control"
+    )
+    control_binned_seed = get_human_distance_lambda_control_binned_rmae(
+        human_pairs, human_data, control_seed, geodesic_edges
+    )
+    control_binned_seed.to_csv(
+        ANALYSIS_DIR / "human_distance_lambda_control_binned_rmae_by_seed.csv", index=False
+    )
+    control_binned = get_human_distance_lambda_control_binned_summary(control_binned_seed)
+    control_binned.to_csv(
+        ANALYSIS_DIR / "human_distance_lambda_control_binned_rmae.csv", index=False
+    )
+    plot_human_distance_lambda_control_binned_rmae(
+        control_binned, FIGURES_DIR / "human_distance_lambda_control_binned_rmae"
+    )
+    center_indices, center_distances = get_human_center_distance_matrices()
+    np.save(ANALYSIS_DIR / "human_center_vertex_indices.npy", center_indices, allow_pickle=False)
+    for label, matrix in center_distances.items():
+        filename = label.lower().replace(" ", "_") + "_center_distances.csv"
+        matrix.to_csv(ANALYSIS_DIR / filename)
+    distance_similarity = get_distance_matrix_similarity(center_distances)
+    distance_similarity.to_csv(ANALYSIS_DIR / "human_center_distance_similarity.csv")
+    plot_human_center_distance_similarity(
+        distance_similarity, FIGURES_DIR / "human_center_distance_similarity"
+    )
     distance_validation = pd.concat([
         get_distance_distribution_validation(f"{animal}_{dataset_key}")
         for animal, dataset_key in [("mouse", "gamanut"), ("marmoset", "majka"), ("macaque", "markov40"), ("human", "lariviere")]
