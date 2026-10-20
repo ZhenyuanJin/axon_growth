@@ -532,7 +532,7 @@ def load_human_bin_catalog(cache_dir, mmap_mode="r"):
     return catalog
 
 
-def get_human_bin_probabilities(catalog, Lambda):
+def get_binned_distance_probabilities(catalog, Lambda):
     """Return truncated exponential probability mass for every distance bin."""
     if not np.isfinite(Lambda) or Lambda <= 0:
         raise ValueError("Lambda must be a positive finite value.")
@@ -549,9 +549,9 @@ def get_human_bin_probabilities(catalog, Lambda):
     return probabilities
 
 
-def get_human_pair_bin_weights(catalog, Lambda):
+def get_binned_pair_weights(catalog, Lambda):
     """Return per-pair probability for each distance bin."""
-    probabilities = get_human_bin_probabilities(catalog, Lambda)
+    probabilities = get_binned_distance_probabilities(catalog, Lambda)
     counts = np.asarray(catalog["global_bin_counts"])
     weights = np.zeros_like(probabilities)
     occupied = counts > 0
@@ -559,9 +559,9 @@ def get_human_pair_bin_weights(catalog, Lambda):
     return weights
 
 
-def get_human_area_probability_matrix(catalog, Lambda):
+def get_binned_area_probability_matrix(catalog, Lambda):
     """Aggregate corrected pair probabilities into an area-pair matrix."""
-    pair_weights = get_human_pair_bin_weights(catalog, Lambda)
+    pair_weights = get_binned_pair_weights(catalog, Lambda)
     counts = np.asarray(catalog["area_pair_bin_counts"], dtype=np.float64)
     probabilities = np.tensordot(pair_weights, counts, axes=(0, 0))
     probability_sum = float(np.sum(probabilities))
@@ -576,13 +576,37 @@ def save_human_area_probability_matrix(cache_dir, Lambda, output_path):
     if output_path.exists():
         return str(output_path)
     catalog = load_human_bin_catalog(cache_dir)
-    probabilities = get_human_area_probability_matrix(catalog, Lambda)
+    probabilities = get_binned_area_probability_matrix(catalog, Lambda)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     np.save(output_path, probabilities, allow_pickle=False)
     return str(output_path)
 
 
-def get_human_area_connection_matrix(catalog, area_probabilities, connection_count, seed):
+def load_binned_area_catalog(cache_dir, mmap_mode="r"):
+    """Load a fixed-width area-pair distance catalog."""
+    cache_dir = Path(cache_dir)
+    names = ["bin_edges", "global_bin_counts", "area_pair_bin_counts"]
+    catalog = {
+        name: np.load(cache_dir / f"{name}.npy", mmap_mode=mmap_mode, allow_pickle=False)
+        for name in names
+    }
+    catalog["metadata"] = _load_json(cache_dir / "metadata.json")
+    return catalog
+
+
+def save_binned_area_probability_matrix(cache_dir, Lambda, output_path):
+    """Save corrected area probabilities for one fixed-width catalog."""
+    output_path = Path(output_path)
+    if output_path.exists():
+        return str(output_path)
+    catalog = load_binned_area_catalog(cache_dir)
+    probabilities = get_binned_area_probability_matrix(catalog, Lambda)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    np.save(output_path, probabilities, allow_pickle=False)
+    return str(output_path)
+
+
+def get_binned_area_connection_matrix(catalog, area_probabilities, connection_count, seed):
     """Sample a directed area connection-count matrix with a local seed."""
     if int(connection_count) != connection_count or connection_count <= 0:
         raise ValueError("connection_count must be a positive integer.")
@@ -607,7 +631,7 @@ def get_human_vertex_samples(catalog, area_connection_matrix, Lambda, seed):
     coordinates = np.asarray(catalog["coordinates"])
     bin_width = catalog["metadata"]["bin_width_mm"]
     bin_count = catalog["metadata"]["bin_count"]
-    pair_bin_weights = get_human_pair_bin_weights(catalog, Lambda)
+    pair_bin_weights = get_binned_pair_weights(catalog, Lambda)
     starts, stops = _get_area_bounds(catalog["area_starts"], len(coordinates))
     total = int(np.sum(area_connection_matrix.values))
     source_output = np.empty(total, dtype=np.uint32)
@@ -651,7 +675,7 @@ def run_human_connection_task(task, cache_dir, output_dir, save_pairs=False, for
     run_dir.mkdir(parents=True, exist_ok=True)
     catalog = load_human_bin_catalog(cache_dir)
     area_probabilities = np.load(task["probability_path"], mmap_mode="r")
-    connection_matrix = get_human_area_connection_matrix(catalog, area_probabilities, task["connection_count"], task["seed"])
+    connection_matrix = get_binned_area_connection_matrix(catalog, area_probabilities, task["connection_count"], task["seed"])
     connection_matrix.to_csv(run_dir / "connection_counts.csv")
     connectivity = uf.get_SC_model_dict_from_CCMt_model(connection_matrix, "human", "lariviere", str(run_dir))
     info = uf.AnimalInfo("human", "lariviere")
@@ -684,9 +708,56 @@ def run_human_connection_task(task, cache_dir, output_dir, save_pairs=False, for
     return metrics
 
 
+def run_binned_area_connection_task(task, cache_dir, output_dir, force_run=False):
+    """Run one deterministic binned Euclidean or geodesic EDR task."""
+    run_dir = Path(output_dir) / task["task_id"]
+    metrics_path = run_dir / "metrics.json"
+    if metrics_path.exists() and not force_run:
+        result = _load_json(metrics_path)
+        result["run_dir"] = str(run_dir)
+        return result
+    run_dir.mkdir(parents=True, exist_ok=True)
+    catalog = load_binned_area_catalog(cache_dir)
+    area_probabilities = np.load(task["probability_path"], mmap_mode="r")
+    connection_matrix = get_binned_area_connection_matrix(
+        catalog, area_probabilities, task["connection_count"], task["seed"]
+    )
+    connection_matrix.to_csv(run_dir / "connection_counts.csv")
+    animal = task["animal"]
+    dataset_key = task["dataset_key"]
+    connectivity = uf.get_SC_model_dict_from_CCMt_model(
+        connection_matrix, animal, dataset_key, str(run_dir)
+    )
+    connectivity_key = "CCMe_sym_normalized" if animal == "human" else "FLNe"
+    info = uf.AnimalInfo(animal, dataset_key)
+    correlation = uf.data_model_correlation(
+        SC_data=info.SC_data,
+        SC_model=connectivity[connectivity_key],
+        animal=animal,
+        dataset_key=dataset_key,
+        diagonal=False,
+    )
+    config = {
+        "animal": animal,
+        "dataset_key": dataset_key,
+        "distance_metric": task["distance_metric"],
+        "bin_width_mm": catalog["metadata"]["bin_width_mm"],
+        "bin_count": catalog["metadata"]["bin_count"],
+        "Lambda": float(task["Lambda"]),
+        "seed": int(task["seed"]),
+        "connection_count": int(task["connection_count"]),
+        "task_id": task["task_id"],
+    }
+    metrics = {**config, "correlation": float(correlation)}
+    _save_json(config, run_dir / "config.json")
+    _save_json(metrics, metrics_path)
+    metrics["run_dir"] = str(run_dir)
+    return metrics
+
+
 def get_distance_histograms(catalog, source_indices, target_indices, Lambda, chunk_size=1_000_000):
     """Return native-bin target and sampled distance probability vectors."""
-    expected = get_human_bin_probabilities(catalog, Lambda)
+    expected = get_binned_distance_probabilities(catalog, Lambda)
     empirical_counts = np.zeros(len(expected), dtype=np.int64)
     coordinates = np.asarray(catalog["coordinates"])
     bin_width = catalog["metadata"]["bin_width_mm"]
@@ -798,6 +869,7 @@ DATASETS = [
     ("macaque", "markov40"),
     ("human", "lariviere"),
 ]
+DISTANCE_METRIC_DATASETS = [("macaque", "markov40"), ("human", "lariviere")]
 
 
 def get_task_table(dataset_name, lambda_values, seeds, connection_count, stage):
@@ -924,6 +996,111 @@ def run_3d_dataset(animal, dataset_key):
     return best
 
 
+def _run_distance_metric_task(task, cache_dir, stage_dir):
+    return run_binned_area_connection_task(task, cache_dir, stage_dir)
+
+
+def prepare_binned_area_probabilities(tasks, cache_dir, stage_dir):
+    """Create one corrected area-probability matrix for each EDR scale."""
+    paths = {}
+    for task in tasks:
+        Lambda = task["Lambda"]
+        if Lambda not in paths:
+            path = stage_dir / "probabilities" / f"lambda_{len(paths):03d}.npy"
+            paths[Lambda] = save_binned_area_probability_matrix(cache_dir, Lambda, path)
+        task["probability_path"] = paths[Lambda]
+
+
+def run_distance_metric_stage(tasks, cache_dir, stage_dir):
+    """Run and save one Euclidean/geodesic EDR parameter-search stage."""
+    stage_dir.mkdir(parents=True, exist_ok=True)
+    prepare_binned_area_probabilities(tasks, cache_dir, stage_dir)
+    results = cf.multi_process(
+        process_num=min(WORKER_COUNT, len(tasks)),
+        func=_run_distance_metric_task,
+        kwargs_list=[{
+            "task": task,
+            "cache_dir": cache_dir,
+            "stage_dir": stage_dir,
+        } for task in tasks],
+        func_name=f"{tasks[0]['dataset_name']} {tasks[0]['distance_metric']} EDR {stage_dir.name}",
+    )
+    summary = pd.DataFrame(sorted(results, key=lambda item: item["task_id"]))
+    summary.to_csv(stage_dir / "summary.csv", index=False)
+    return summary
+
+
+def get_binned_coarse_lambdas(cache_dir):
+    """Return a broad EDR-scale scan for a fixed-width distance catalog."""
+    metadata = _load_json(Path(cache_dir) / "metadata.json")
+    lower = float(metadata["bin_width_mm"])
+    upper = float(metadata["maximum_distance_mm"]) / 2
+    if upper <= lower:
+        raise ValueError("Distance range is too small for an EDR-scale scan.")
+    return np.geomspace(lower, upper, COARSE_POINT_COUNT)
+
+
+def run_distance_metric_dataset(animal, dataset_key, distance_metric):
+    """Scan one full-pair Euclidean or geodesic EDR model."""
+    dataset_name = f"{animal}_{dataset_key}"
+    comparison_dir = MODELS_DIR / "distance_metric_comparison" / dataset_name / distance_metric
+    cache_dir = PREPROCESSING_DIR / dataset_name / "full_pair_distances" / f"{distance_metric}_catalog"
+    coarse_lambdas = get_binned_coarse_lambdas(cache_dir)
+    coarse_tasks = get_task_table(
+        dataset_name, coarse_lambdas, COARSE_SEEDS, COARSE_CONNECTION_COUNT, "coarse"
+    )
+    for task in coarse_tasks:
+        task["distance_metric"] = distance_metric
+    coarse = run_distance_metric_stage(coarse_tasks, cache_dir, comparison_dir / "coarse")
+    coarse_best, _ = get_best_lambda(coarse)
+    fine_lambdas = get_fine_lambdas(coarse_lambdas, coarse_best)
+    fine_tasks = get_task_table(
+        dataset_name, fine_lambdas, FINAL_SEEDS, FINAL_CONNECTION_COUNT, "fine"
+    )
+    for task in fine_tasks:
+        task["distance_metric"] = distance_metric
+    fine = run_distance_metric_stage(fine_tasks, cache_dir, comparison_dir / "fine")
+    best_lambda, grouped = get_best_lambda(fine)
+    grouped.to_csv(comparison_dir / "lambda_summary.csv", index=False)
+    best_tasks = get_task_table(
+        dataset_name, [best_lambda], FINAL_SEEDS, FINAL_CONNECTION_COUNT, "best"
+    )
+    for task in best_tasks:
+        task["distance_metric"] = distance_metric
+    best = run_distance_metric_stage(best_tasks, cache_dir, comparison_dir / "best")
+    best["animal"] = animal
+    best["dataset_key"] = dataset_key
+    best["distance_metric"] = distance_metric
+    selected = {
+        "animal": animal,
+        "dataset_key": dataset_key,
+        "distance_metric": distance_metric,
+        "best_lambda": best_lambda,
+        "mean_correlation": float(best["correlation"].mean()),
+        "std_correlation": float(best["correlation"].std()),
+        "seed_correlations": {
+            str(int(row.seed)): float(row.correlation) for row in best.itertuples()
+        },
+    }
+    _save_json(selected, comparison_dir / "optimal_parameters.json")
+    return best
+
+
+def run_distance_metric_comparison():
+    """Run full-pair Euclidean and geodesic EDR scans for macaque and human."""
+    summaries = []
+    for animal, dataset_key in DISTANCE_METRIC_DATASETS:
+        for distance_metric in ["euclidean", "geodesic"]:
+            summaries.append(
+                run_distance_metric_dataset(animal, dataset_key, distance_metric).copy()
+            )
+    combined = pd.concat(summaries, ignore_index=True)
+    output_path = MODELS_DIR / "distance_metric_comparison" / "optimal_seed_correlations.csv"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    combined.to_csv(output_path, index=False)
+    return combined
+
+
 def _run_2d_task(task):
     model = uf.get_connection_generation_results(task["config"], MODELS_DIR / "2d_runs")
     animal = task["config"]["animal"]
@@ -988,6 +1165,12 @@ def main():
         for animal, dataset_key in DATASETS
     ]
     missing = [path for path in missing if not path.exists()]
+    missing.extend([
+        PREPROCESSING_DIR / dataset_name / "full_pair_distances" / f"{metric}_catalog" / "metadata.json"
+        for dataset_name in ["macaque_markov40", "human_lariviere"]
+        for metric in ["euclidean", "geodesic"]
+        if not (PREPROCESSING_DIR / dataset_name / "full_pair_distances" / f"{metric}_catalog" / "metadata.json").exists()
+    ])
     if missing:
         raise FileNotFoundError("Run preprocess.py first. Missing:\n" + "\n".join(str(path) for path in missing))
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
@@ -998,6 +1181,7 @@ def main():
         summaries.append(best)
     combined = pd.concat(summaries, ignore_index=True)
     combined.to_csv(MODELS_DIR / "optimal_seed_correlations.csv", index=False)
+    run_distance_metric_comparison()
 
 
 if __name__ == "__main__":

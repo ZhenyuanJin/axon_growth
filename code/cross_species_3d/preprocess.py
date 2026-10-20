@@ -9,7 +9,6 @@ import numpy as np
 import pandas as pd
 import scipy.sparse
 import scipy.sparse.csgraph
-import scipy.spatial.distance
 import scipy.stats
 import SimpleITK as sitk
 from cross_species_3d import model
@@ -53,6 +52,11 @@ def _save_json(data, path):
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as file:
         json.dump(data, file, indent=2, sort_keys=True)
+
+
+def _load_json(path):
+    with Path(path).open(encoding="utf-8") as file:
+        return json.load(file)
 
 
 def _get_sha256(path):
@@ -404,85 +408,14 @@ def get_largest_component_mask(graph):
     return labels == int(np.argmax(sizes)), sizes
 
 
-def get_sampled_source_indices(area_ids, sampled_area_ids, valid_mask, samples_per_area, seed):
-    """Return deterministic sampled graph nodes for each requested area.
-
-    Randomness is local and fully determined by seed. Sampling is without
-    replacement and each requested area contributes samples_per_area nodes.
-    """
-    if int(samples_per_area) != samples_per_area or samples_per_area <= 0:
-        raise ValueError("samples_per_area must be a positive integer.")
-    rng = cf.get_local_rng(seed=seed)
-    sampled_indices = []
-    sampled_labels = []
-    for area_id in sampled_area_ids:
-        candidates = np.flatnonzero((area_ids == area_id) & valid_mask)
-        if len(candidates) < samples_per_area:
-            raise ValueError(f"Area {area_id} has fewer valid voxels than requested samples.")
-        selected = rng.choice(candidates, size=int(samples_per_area), replace=False)
-        sampled_indices.append(selected)
-        sampled_labels.append(np.full(int(samples_per_area), area_id, dtype=np.int16))
-    return np.concatenate(sampled_indices), np.concatenate(sampled_labels)
-
-
-def get_sampled_area_distance_matrices(graph, coordinates, area_ids, sampled_area_ids, source_indices, source_area_ids, batch_size):
-    """Estimate area-pair geodesic and Euclidean means from sampled sources.
-
-    Each sampled source is compared with every valid target voxel. The two
-    returned arrays have shape (area_count, sampled_area_count), float64 dtype,
-    and use identical source-target samples. No randomness occurs here.
-    """
-    if int(batch_size) != batch_size or batch_size <= 0:
-        raise ValueError("batch_size must be a positive integer.")
-    coordinates = np.asarray(coordinates, dtype=np.float64)
-    area_ids = np.asarray(area_ids)
-    source_indices = np.asarray(source_indices, dtype=np.int64)
-    source_area_ids = np.asarray(source_area_ids)
-    largest_mask, component_sizes = get_largest_component_mask(graph)
-    valid_indices = np.flatnonzero(largest_mask)
-    valid_area_ids = area_ids[valid_indices]
-    valid_coordinates = coordinates[valid_indices]
-    area_count = int(np.max(area_ids) + 1)
-    area_voxel_counts = np.bincount(valid_area_ids, minlength=area_count)
-    if np.any(area_voxel_counts == 0):
-        raise ValueError("At least one area has no voxel in the largest graph component.")
-    sampled_area_ids = np.asarray(sampled_area_ids, dtype=np.int64)
-    sampled_lookup = {int(area_id): index for index, area_id in enumerate(sampled_area_ids)}
-    geodesic_sum = np.zeros((area_count, len(sampled_area_ids)), dtype=np.float64)
-    euclidean_sum = np.zeros_like(geodesic_sum)
-    sample_counts = np.zeros(len(sampled_area_ids), dtype=np.int64)
-    for start in range(0, len(source_indices), int(batch_size)):
-        stop = min(start + int(batch_size), len(source_indices))
-        local_sources = source_indices[start:stop]
-        geodesic = scipy.sparse.csgraph.dijkstra(
-            graph, directed=False, indices=local_sources, return_predecessors=False
-        )[:, valid_indices]
-        if not np.all(np.isfinite(geodesic)):
-            raise ValueError("Non-finite distance occurred inside the largest component.")
-        euclidean = scipy.spatial.distance.cdist(coordinates[local_sources], valid_coordinates)
-        for local_index, source_area_id in enumerate(source_area_ids[start:stop]):
-            sampled_index = sampled_lookup[int(source_area_id)]
-            geodesic_sum[:, sampled_index] += np.bincount(
-                valid_area_ids, weights=geodesic[local_index], minlength=area_count
-            ) / area_voxel_counts
-            euclidean_sum[:, sampled_index] += np.bincount(
-                valid_area_ids, weights=euclidean[local_index], minlength=area_count
-            ) / area_voxel_counts
-            sample_counts[sampled_index] += 1
-    if np.any(sample_counts == 0):
-        raise ValueError("At least one requested source area received no samples.")
-    geodesic_mean = geodesic_sum / sample_counts[np.newaxis, :]
-    euclidean_mean = euclidean_sum / sample_counts[np.newaxis, :]
-    return geodesic_mean, euclidean_mean, component_sizes
-
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RAW_ALLEN_DIR = PROJECT_ROOT / "raw_data" / "mouse_allen_ccf2017"
 OUTPUT_DIR = PROJECT_ROOT / "results" / "cross_species_3d"
 PREPROCESSING_DIR = OUTPUT_DIR / "preprocessing"
-HUMAN_GEODESIC_BATCH_SIZE = 32
-MACAQUE_SAMPLES_PER_AREA = 10
-MACAQUE_SAMPLE_SEED = 20261017
+FULL_DISTANCE_WORKER_COUNT = 64
+FULL_DISTANCE_SOURCE_CHUNK_SIZE = 256
+FULL_DISTANCE_DIJKSTRA_BATCH_SIZE = 16
+GEODESIC_BIN_WIDTH_MM = {"macaque_markov40": 0.02, "human_lariviere": 0.1}
 
 
 def get_human_surface_data():
@@ -543,40 +476,49 @@ def get_shortest_path(predecessors, source, target):
     return np.asarray(path[::-1], dtype=np.int32)
 
 
-def build_human_geodesic_cache(output_dir, verbose=False):
-    """Build exact area-pair geodesic summaries and one shortcut example."""
+def build_human_shortcut_cache(full_distance_dir, output_dir):
+    """Build one human shortcut example from the saved full-pair distances."""
+    full_distance_dir = Path(full_distance_dir)
     output_dir = Path(output_dir)
+    required = [
+        output_dir / "metadata.json",
+        output_dir / "surface_vertices.npy",
+        output_dir / "surface_faces.npy",
+        output_dir / "shortcut_path_indices.npy",
+    ]
+    if all(path.exists() for path in required):
+        return _load_json(output_dir / "metadata.json")
     output_dir.mkdir(parents=True, exist_ok=True)
-    vertices, faces, area_ids, area_names = get_human_surface_data()
+    vertices, faces, _, _ = get_human_surface_data()
     graph = get_surface_graph(vertices, faces)
-    area_count = len(area_names)
-    area_counts = np.bincount(area_ids, minlength=area_count)
-    pair_counts = np.outer(area_counts, area_counts).astype(np.int64)
-    pair_counts[np.diag_indices(area_count)] -= area_counts
-    sum_geodesic = np.zeros((area_count, area_count), dtype=np.float64)
-    sum_euclidean = np.zeros_like(sum_geodesic)
     best_ratio = -np.inf
     best_pair = None
-    for start in range(0, len(vertices), HUMAN_GEODESIC_BATCH_SIZE):
-        stop = min(start + HUMAN_GEODESIC_BATCH_SIZE, len(vertices))
-        source_indices = np.arange(start, stop, dtype=np.int32)
-        geodesic = scipy.sparse.csgraph.dijkstra(graph, directed=False, indices=source_indices)
-        if not np.all(np.isfinite(geodesic)):
-            raise ValueError("Human surface graph produced non-finite geodesic distances.")
-        euclidean = scipy.spatial.distance.cdist(vertices[source_indices], vertices)
-        for local_index, source_index in enumerate(source_indices):
-            source_area = int(area_ids[source_index])
-            sum_geodesic[source_area] += np.bincount(area_ids, weights=geodesic[local_index], minlength=area_count)
-            sum_euclidean[source_area] += np.bincount(area_ids, weights=euclidean[local_index], minlength=area_count)
-            eligible = (euclidean[local_index] >= 2.0) & (euclidean[local_index] <= 15.0)
-            eligible[source_index] = False
-            ratios = np.divide(geodesic[local_index], euclidean[local_index], out=np.zeros_like(geodesic[local_index]), where=eligible)
-            target_index = int(np.argmax(ratios))
-            if ratios[target_index] > best_ratio:
-                best_ratio = float(ratios[target_index])
-                best_pair = (int(source_index), target_index)
-        if verbose:
-            print(f"Human geodesic preprocessing: {stop}/{len(vertices)} vertices")
+    chunk_metadata = sorted(
+        full_distance_dir.glob("chunks/*/metadata.json"),
+        key=lambda path: path.parent.name,
+    )
+    if not chunk_metadata:
+        raise FileNotFoundError(f"No full-pair distance chunks found under {full_distance_dir}.")
+    for metadata_path in chunk_metadata:
+        metadata = _load_json(metadata_path)
+        packed = np.load(metadata_path.parent / "geodesic_upper_float32.npy", mmap_mode="r")
+        offset = 0
+        for source in range(metadata["source_start"], metadata["source_stop"]):
+            targets = np.arange(source + 1, len(vertices), dtype=np.int32)
+            row_count = len(targets)
+            geodesic = np.asarray(packed[offset:offset + row_count], dtype=np.float64)
+            offset += row_count
+            euclidean = np.linalg.norm(vertices[targets] - vertices[source], axis=1)
+            eligible = (euclidean >= 2.0) & (euclidean <= 15.0)
+            ratios = np.divide(geodesic, euclidean, out=np.zeros_like(geodesic), where=eligible)
+            target_position = int(np.argmax(ratios))
+            if ratios[target_position] > best_ratio:
+                best_ratio = float(ratios[target_position])
+                best_pair = (source, int(targets[target_position]))
+        if offset != len(packed):
+            raise ValueError(f"Packed distance count mismatch in {metadata_path.parent.name}.")
+    if best_pair is None:
+        raise ValueError("No eligible human shortcut pair was found.")
     source, target = best_pair
     distances, predecessors = scipy.sparse.csgraph.dijkstra(
         graph, directed=False, indices=source, return_predecessors=True
@@ -584,17 +526,14 @@ def build_human_geodesic_cache(output_dir, verbose=False):
     path = get_shortest_path(predecessors, source, target)
     np.save(output_dir / "surface_vertices.npy", vertices, allow_pickle=False)
     np.save(output_dir / "surface_faces.npy", faces, allow_pickle=False)
-    np.save(output_dir / "area_ids.npy", area_ids, allow_pickle=False)
-    np.save(output_dir / "pair_counts.npy", pair_counts, allow_pickle=False)
-    np.save(output_dir / "sum_geodesic.npy", sum_geodesic, allow_pickle=False)
-    np.save(output_dir / "sum_euclidean.npy", sum_euclidean, allow_pickle=False)
     np.save(output_dir / "shortcut_path_indices.npy", path, allow_pickle=False)
     metadata = {
         "animal": "human",
         "dataset_key": "lariviere",
-        "area_names": area_names,
         "vertex_count": len(vertices),
         "face_count": len(faces),
+        "selection_euclidean_range_mm": [2.0, 15.0],
+        "selection_distance_dtype": "float32",
         "shortcut_source_index": source,
         "shortcut_target_index": target,
         "shortcut_euclidean_mm": float(np.linalg.norm(vertices[source] - vertices[target])),
@@ -605,44 +544,258 @@ def build_human_geodesic_cache(output_dir, verbose=False):
     return metadata
 
 
-def build_macaque_geodesic_cache(catalog_dir, output_dir):
-    """Build deterministic no-corner-cutting macaque area distance ratios."""
+def _extend_bin_counts(counts, bin_count):
+    if counts.shape[1] >= bin_count:
+        return counts
+    extended = np.zeros((counts.shape[0], bin_count, counts.shape[2]), dtype=np.uint64)
+    extended[:, :counts.shape[1]] = counts
+    return extended
+
+
+def _add_forward_bin_counts(counts, source_slot, target_area_ids, distances, bin_width):
+    bin_indices = np.floor(np.asarray(distances) / bin_width).astype(np.int64)
+    required_bin_count = int(np.max(bin_indices)) + 1
+    counts = _extend_bin_counts(counts, required_bin_count)
+    area_count = counts.shape[2]
+    flat_indices = bin_indices * area_count + target_area_ids
+    local = np.bincount(flat_indices, minlength=required_bin_count * area_count).astype(np.uint64)
+    counts[source_slot, :required_bin_count] += local.reshape(required_bin_count, area_count)
+    return counts
+
+
+def get_full_distance_chunk(graph, coordinates, area_ids, task, output_dir, bin_width, dijkstra_batch_size):
+    """Save one packed upper-triangle distance chunk and its pair-bin counts.
+
+    The chunk contains every pair whose lower point index lies in the task
+    interval and whose upper index is larger. Geodesic and Euclidean counts use
+    the same unordered point pairs. No randomness is used.
+    """
+    output_dir = Path(output_dir)
+    chunk_dir = output_dir / "chunks" / task["task_id"]
+    metadata_path = chunk_dir / "metadata.json"
+    distance_path = chunk_dir / "geodesic_upper_float32.npy"
+    counts_path = chunk_dir / "forward_bin_counts.npz"
+    if metadata_path.exists() and distance_path.exists() and counts_path.exists():
+        return _load_json(metadata_path)
+    chunk_dir.mkdir(parents=True, exist_ok=True)
+    source_start = int(task["source_start"])
+    source_stop = int(task["source_stop"])
+    point_count = len(coordinates)
+    source_indices = np.arange(source_start, source_stop, dtype=np.int64)
+    pair_count = int(np.sum(point_count - source_indices - 1, dtype=np.int64))
+    packed = np.lib.format.open_memmap(distance_path, mode="w+", dtype=np.float32, shape=(pair_count,))
+    source_area_ids = np.unique(area_ids[source_start:source_stop])
+    source_lookup = {int(area_id): index for index, area_id in enumerate(source_area_ids)}
+    geodesic_counts = np.zeros((len(source_area_ids), 1, len(np.unique(area_ids))), dtype=np.uint64)
+    euclidean_counts = np.zeros_like(geodesic_counts)
+    geodesic_max = 0.0
+    euclidean_max = 0.0
+    offset = 0
+    for batch_start in range(source_start, source_stop, int(dijkstra_batch_size)):
+        batch_stop = min(batch_start + int(dijkstra_batch_size), source_stop)
+        batch_sources = np.arange(batch_start, batch_stop, dtype=np.int64)
+        geodesic_batch = scipy.sparse.csgraph.dijkstra(
+            graph, directed=False, indices=batch_sources, return_predecessors=False
+        )
+        for local_index, source_index in enumerate(batch_sources):
+            target_slice = slice(source_index + 1, point_count)
+            geodesic = geodesic_batch[local_index, target_slice]
+            if not np.all(np.isfinite(geodesic)):
+                raise ValueError(f"Non-finite geodesic distance in {task['task_id']}.")
+            euclidean = np.linalg.norm(coordinates[target_slice] - coordinates[source_index], axis=1)
+            row_count = len(geodesic)
+            packed[offset:offset + row_count] = geodesic.astype(np.float32)
+            offset += row_count
+            if row_count == 0:
+                continue
+            geodesic_max = max(geodesic_max, float(np.max(geodesic)))
+            euclidean_max = max(euclidean_max, float(np.max(euclidean)))
+            source_slot = source_lookup[int(area_ids[source_index])]
+            target_area_ids = area_ids[target_slice].astype(np.int64, copy=False)
+            geodesic_counts = _add_forward_bin_counts(
+                geodesic_counts, source_slot, target_area_ids, geodesic, bin_width
+            )
+            euclidean_counts = _add_forward_bin_counts(
+                euclidean_counts, source_slot, target_area_ids, euclidean, bin_width
+            )
+    if offset != pair_count:
+        raise ValueError(f"Packed distance count mismatch in {task['task_id']}.")
+    packed.flush()
+    if int(np.sum(geodesic_counts)) != pair_count or int(np.sum(euclidean_counts)) != pair_count:
+        raise ValueError(f"Pair-bin count mismatch in {task['task_id']}.")
+    np.savez(
+        counts_path, source_area_ids=source_area_ids, geodesic_counts=geodesic_counts,
+        euclidean_counts=euclidean_counts,
+    )
+    metadata = {
+        **task,
+        "point_count": point_count,
+        "unordered_pair_count": pair_count,
+        "geodesic_maximum_distance_mm": geodesic_max,
+        "euclidean_maximum_distance_mm": euclidean_max,
+        "distance_dtype": "float32",
+        "bin_width_mm": float(bin_width),
+    }
+    _save_json(metadata, metadata_path)
+    return metadata
+
+
+def get_full_distance_chunks_worker(task_list, graph_path, coordinates_path, area_ids_path, output_dir, bin_width, dijkstra_batch_size):
+    """Process deterministic distance chunks after loading shared inputs once."""
+    graph = scipy.sparse.load_npz(graph_path)
+    coordinates = np.load(coordinates_path, mmap_mode="r")
+    area_ids = np.load(area_ids_path, mmap_mode="r")
+    return [
+        get_full_distance_chunk(
+            graph, coordinates, area_ids, task, output_dir, bin_width, dijkstra_batch_size
+        )
+        for task in task_list
+    ]
+
+
+def _save_full_binned_catalog(output_dir, metric, chunk_metadata, area_names, point_count, bin_width):
+    maximum_distance = max(item[f"{metric}_maximum_distance_mm"] for item in chunk_metadata)
+    bin_count = int(np.floor(maximum_distance / bin_width)) + 1
+    area_count = len(area_names)
+    counts = np.zeros((bin_count, area_count, area_count), dtype=np.uint64)
+    for item in sorted(chunk_metadata, key=lambda value: value["task_id"]):
+        counts_path = Path(output_dir) / "chunks" / item["task_id"] / "forward_bin_counts.npz"
+        with np.load(counts_path) as local:
+            source_area_ids = local["source_area_ids"]
+            forward = local[f"{metric}_counts"]
+        for source_slot, source_area_id in enumerate(source_area_ids):
+            local_bin_count = forward.shape[1]
+            counts[:local_bin_count, source_area_id, :] += forward[source_slot]
+            counts[:local_bin_count, :, source_area_id] += forward[source_slot]
+    expected_pair_count = point_count * (point_count - 1)
+    if int(np.sum(counts, dtype=np.uint64)) != expected_pair_count:
+        raise ValueError(f"{metric} catalog does not contain every ordered non-self pair.")
+    global_counts = np.sum(counts, axis=(1, 2), dtype=np.uint64)
+    occupied = np.flatnonzero(global_counts)
+    final_bin_count = int(occupied[-1]) + 1
+    counts = counts[:final_bin_count]
+    global_counts = global_counts[:final_bin_count]
+    bin_edges = np.arange(final_bin_count + 1, dtype=np.float64) * bin_width
+    catalog_dir = Path(output_dir) / f"{metric}_catalog"
+    catalog_dir.mkdir(parents=True, exist_ok=True)
+    np.save(catalog_dir / "bin_edges.npy", bin_edges, allow_pickle=False)
+    np.save(catalog_dir / "global_bin_counts.npy", global_counts, allow_pickle=False)
+    np.save(catalog_dir / "area_pair_bin_counts.npy", counts, allow_pickle=False)
+    metadata = {
+        "distance_metric": metric,
+        "bin_width_mm": float(bin_width),
+        "bin_count": final_bin_count,
+        "occupied_bin_count": int(np.count_nonzero(global_counts)),
+        "point_count": int(point_count),
+        "ordered_nonself_pair_count": int(expected_pair_count),
+        "maximum_distance_mm": float(maximum_distance),
+        "area_count": area_count,
+        "area_names": list(area_names),
+    }
+    _save_json(metadata, catalog_dir / "metadata.json")
+    return metadata
+
+
+def build_full_distance_catalogs(graph, coordinates, area_ids, area_names, output_dir, bin_width, worker_count=FULL_DISTANCE_WORKER_COUNT, source_chunk_size=FULL_DISTANCE_SOURCE_CHUNK_SIZE, dijkstra_batch_size=FULL_DISTANCE_DIJKSTRA_BATCH_SIZE):
+    """Build exact Euclidean/geodesic bin catalogs and packed geodesic chunks.
+
+    Only the largest graph component is retained. Every unordered point pair is
+    saved once as float32 geodesic distance; both orientations are represented
+    exactly in the two area-pair/bin catalogs. Work is deterministic and
+    resumable at source-chunk boundaries.
+    """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    catalog = model.load_displacement_catalog(catalog_dir)
-    graph = get_no_corner_cutting_graph(
-        catalog["grid_indices"], catalog["voxel_map"], catalog["metadata"]["spacing_mm"]
-    )
-    info = uf.AnimalInfo("macaque", "markov40")
-    area_names = list(catalog["metadata"]["area_names"])
-    area_lookup = {name: index for index, name in enumerate(area_names)}
-    sampled_area_ids = np.asarray([area_lookup[name] for name in info.target_name], dtype=np.int64)
     largest_mask, component_sizes = get_largest_component_mask(graph)
-    source_indices, source_area_ids = get_sampled_source_indices(
-        catalog["area_ids"], sampled_area_ids, largest_mask,
-        MACAQUE_SAMPLES_PER_AREA, MACAQUE_SAMPLE_SEED,
+    component_indices = np.flatnonzero(largest_mask)
+    component_graph = graph[component_indices][:, component_indices].tocsr()
+    component_coordinates = np.asarray(coordinates)[component_indices]
+    component_area_ids = np.asarray(area_ids)[component_indices]
+    if not np.array_equal(np.unique(component_area_ids), np.arange(len(area_names))):
+        raise ValueError("Every area must occur in the largest graph component.")
+    graph_path = output_dir / "largest_component_graph.npz"
+    coordinates_path = output_dir / "coordinates.npy"
+    area_ids_path = output_dir / "area_ids.npy"
+    component_indices_path = output_dir / "original_point_indices.npy"
+    scipy.sparse.save_npz(graph_path, component_graph)
+    np.save(coordinates_path, component_coordinates, allow_pickle=False)
+    np.save(area_ids_path, component_area_ids, allow_pickle=False)
+    np.save(component_indices_path, component_indices, allow_pickle=False)
+    point_count = len(component_coordinates)
+    tasks = []
+    for task_index, source_start in enumerate(range(0, point_count - 1, int(source_chunk_size))):
+        tasks.append({
+            "task_id": f"chunk_{task_index:05d}",
+            "source_start": int(source_start),
+            "source_stop": int(min(source_start + int(source_chunk_size), point_count - 1)),
+        })
+    worker_count = min(int(worker_count), len(tasks))
+    task_groups = [tasks[index::worker_count] for index in range(worker_count)]
+    results = cf.multi_process(
+        process_num=worker_count,
+        func=get_full_distance_chunks_worker,
+        kwargs_list=[{
+            "task_list": task_group,
+            "graph_path": graph_path,
+            "coordinates_path": coordinates_path,
+            "area_ids_path": area_ids_path,
+            "output_dir": output_dir,
+            "bin_width": float(bin_width),
+            "dijkstra_batch_size": int(dijkstra_batch_size),
+        } for task_group in task_groups],
+        func_name=f"full geodesic distances: {output_dir.parent.name}",
     )
-    geodesic, euclidean, component_sizes = get_sampled_area_distance_matrices(
-        graph, catalog["coordinates"], catalog["area_ids"], sampled_area_ids,
-        source_indices, source_area_ids, batch_size=4,
+    chunk_metadata = sorted([item for group in results for item in group], key=lambda item: item["task_id"])
+    if [item["task_id"] for item in chunk_metadata] != [task["task_id"] for task in tasks]:
+        raise ValueError("Full-distance chunks are missing or duplicated.")
+    euclidean = _save_full_binned_catalog(
+        output_dir, "euclidean", chunk_metadata, area_names, point_count, float(bin_width)
     )
-    row_ids = np.asarray([area_lookup[name] for name in info.source_name], dtype=np.int64)
-    np.save(output_dir / "geodesic_mean.npy", geodesic[np.ix_(row_ids, np.arange(len(sampled_area_ids)))], allow_pickle=False)
-    np.save(output_dir / "euclidean_mean.npy", euclidean[np.ix_(row_ids, np.arange(len(sampled_area_ids)))], allow_pickle=False)
-    np.save(output_dir / "sampled_source_indices.npy", source_indices, allow_pickle=False)
-    scipy.sparse.save_npz(output_dir / "no_corner_cutting_graph.npz", graph)
+    geodesic = _save_full_binned_catalog(
+        output_dir, "geodesic", chunk_metadata, area_names, point_count, float(bin_width)
+    )
     metadata = {
-        "animal": "macaque",
-        "dataset_key": "markov40",
-        "source_names": list(info.source_name),
-        "target_names": list(info.target_name),
-        "sample_seed": MACAQUE_SAMPLE_SEED,
-        "samples_per_area": MACAQUE_SAMPLES_PER_AREA,
+        "bin_width_mm": float(bin_width),
+        "point_count": point_count,
+        "original_point_count": len(coordinates),
         "graph_component_count": len(component_sizes),
-        "largest_component_voxel_count": int(np.max(component_sizes)),
+        "largest_component_point_count": int(np.max(component_sizes)),
+        "source_chunk_size": int(source_chunk_size),
+        "dijkstra_batch_size": int(dijkstra_batch_size),
+        "distance_chunk_count": len(tasks),
+        "packed_upper_triangle_pair_count": int(point_count * (point_count - 1) // 2),
+        "packed_distance_dtype": "float32",
+        "area_names": list(area_names),
+        "euclidean_bin_count": euclidean["bin_count"],
+        "geodesic_bin_count": geodesic["bin_count"],
     }
     _save_json(metadata, output_dir / "metadata.json")
     return metadata
+
+
+def build_macaque_full_distance_catalogs(worker_count=FULL_DISTANCE_WORKER_COUNT):
+    """Build full macaque Euclidean and no-corner-cutting geodesic catalogs."""
+    dataset_dir = PREPROCESSING_DIR / "macaque_markov40"
+    catalog = model.load_displacement_catalog(dataset_dir / "distance_catalog")
+    graph = get_no_corner_cutting_graph(
+        catalog["grid_indices"], catalog["voxel_map"], catalog["metadata"]["spacing_mm"]
+    )
+    return build_full_distance_catalogs(
+        graph, catalog["coordinates"], catalog["area_ids"], catalog["metadata"]["area_names"],
+        dataset_dir / "full_pair_distances", GEODESIC_BIN_WIDTH_MM["macaque_markov40"],
+        worker_count=worker_count,
+    )
+
+
+def build_human_full_distance_catalogs(worker_count=FULL_DISTANCE_WORKER_COUNT):
+    """Build full human Euclidean and surface-geodesic distance catalogs."""
+    vertices, faces, area_ids, area_names = get_human_surface_data()
+    graph = get_surface_graph(vertices, faces)
+    return build_full_distance_catalogs(
+        graph, vertices, area_ids, area_names,
+        PREPROCESSING_DIR / "human_lariviere" / "full_pair_distances",
+        GEODESIC_BIN_WIDTH_MM["human_lariviere"], worker_count=worker_count,
+    )
 
 
 def main():
@@ -662,13 +815,15 @@ def main():
             animal=animal, dataset_key=dataset_key,
         )
     model.build_human_bin_catalog(
-        PROJECT_ROOT, PREPROCESSING_DIR / "human_lariviere" / "distance_catalog", bin_width=0.1
+        PROJECT_ROOT, PREPROCESSING_DIR / "human_lariviere" / "distance_catalog",
+        bin_width=GEODESIC_BIN_WIDTH_MM["human_lariviere"],
     )
-    build_macaque_geodesic_cache(
-        PREPROCESSING_DIR / "macaque_markov40" / "distance_catalog",
-        PREPROCESSING_DIR / "macaque_markov40" / "geodesic",
+    build_macaque_full_distance_catalogs()
+    build_human_full_distance_catalogs()
+    build_human_shortcut_cache(
+        PREPROCESSING_DIR / "human_lariviere" / "full_pair_distances",
+        PREPROCESSING_DIR / "human_lariviere" / "shortcut",
     )
-    build_human_geodesic_cache(PREPROCESSING_DIR / "human_lariviere" / "geodesic", verbose=True)
 
 
 if __name__ == "__main__":

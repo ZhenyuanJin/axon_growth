@@ -33,7 +33,7 @@ def load_voxel_samples(cache_dir, seed):
 
 def load_human_samples(cache_dir, probabilities, seed):
     catalog = model.load_human_bin_catalog(cache_dir)
-    return model.get_human_area_connection_matrix(catalog, probabilities, 2000, seed).values
+    return model.get_binned_area_connection_matrix(catalog, probabilities, 2000, seed).values
 
 
 def test_3d_matrices_follow_available_area_centers(monkeypatch, tmp_path):
@@ -101,12 +101,12 @@ def test_voxel_sampling_reproducible_across_process_modes(tmp_path):
 
 def test_human_bin_mass_and_sampling(tmp_path):
     catalog = get_human_catalog(tmp_path)
-    probabilities = model.get_human_bin_probabilities(catalog, 0.8)
-    weights = model.get_human_pair_bin_weights(catalog, 0.8)
+    probabilities = model.get_binned_distance_probabilities(catalog, 0.8)
+    weights = model.get_binned_pair_weights(catalog, 0.8)
     assert np.allclose(weights * catalog["global_bin_counts"], probabilities, rtol=0, atol=1e-15)
-    area_probabilities = model.get_human_area_probability_matrix(catalog, 0.8)
+    area_probabilities = model.get_binned_area_probability_matrix(catalog, 0.8)
     assert np.isclose(np.sum(area_probabilities), 1.0, rtol=0, atol=1e-12)
-    counts = model.get_human_area_connection_matrix(catalog, area_probabilities, 5000, 3)
+    counts = model.get_binned_area_connection_matrix(catalog, area_probabilities, 5000, 3)
     first = model.get_human_vertex_samples(catalog, counts, 0.8, 7)
     second = model.get_human_vertex_samples(catalog, counts, 0.8, 7)
     assert np.array_equal(first[0], second[0])
@@ -119,8 +119,8 @@ def test_human_bin_mass_and_sampling(tmp_path):
 
 def test_human_area_sampling_reproducible_across_process_modes(tmp_path):
     catalog = get_human_catalog(tmp_path)
-    probabilities = model.get_human_area_probability_matrix(catalog, 0.8)
-    expected = model.get_human_area_connection_matrix(catalog, probabilities, 2000, 4).values
+    probabilities = model.get_binned_area_probability_matrix(catalog, 0.8)
+    expected = model.get_binned_area_connection_matrix(catalog, probabilities, 2000, 4).values
     kwargs = {"cache_dir": Path(tmp_path) / "human_catalog", "probabilities": probabilities, "seed": 4}
     results = cf.multi_process(process_num=2, func=load_human_samples, kwargs_list=[kwargs, kwargs], func_name="cross-species human reproducibility")
     for result in results:
@@ -150,6 +150,68 @@ def test_no_corner_cutting_graph():
     voxel_map[tuple(points.T)] = np.arange(len(points))
     graph = preprocess.get_no_corner_cutting_graph(points, voxel_map, np.ones(3))
     assert np.isclose(scipy.sparse.csgraph.dijkstra(graph, directed=False, indices=0)[3], np.sqrt(2))
+
+
+def test_full_distance_catalog_counts_every_ordered_pair(monkeypatch, tmp_path):
+    coordinates = np.asarray([[0, 0, 0], [1, 0, 0], [2, 0, 0], [3, 0, 0]], dtype=float)
+    area_ids = np.asarray([0, 0, 1, 1], dtype=np.int16)
+    graph = scipy.sparse.csr_matrix(np.asarray([
+        [0, 1, 0, 0],
+        [1, 0, 1, 0],
+        [0, 1, 0, 1],
+        [0, 0, 1, 0],
+    ], dtype=float))
+    output_dir = Path(tmp_path) / "toy" / "full_pair_distances"
+    metadata = preprocess.build_full_distance_catalogs(
+        graph, coordinates, area_ids, ["A", "B"], output_dir, bin_width=0.5,
+        worker_count=1, source_chunk_size=2, dijkstra_batch_size=1,
+    )
+    resumed = preprocess.build_full_distance_catalogs(
+        graph, coordinates, area_ids, ["A", "B"], output_dir, bin_width=0.5,
+        worker_count=1, source_chunk_size=2, dijkstra_batch_size=1,
+    )
+    assert resumed == metadata
+    assert metadata["packed_upper_triangle_pair_count"] == 6
+    distance_count = sum(
+        len(np.load(path)) for path in output_dir.glob("chunks/*/geodesic_upper_float32.npy")
+    )
+    assert distance_count == 6
+    euclidean = model.load_binned_area_catalog(output_dir / "euclidean_catalog")
+    geodesic = model.load_binned_area_catalog(output_dir / "geodesic_catalog")
+    assert np.array_equal(euclidean["area_pair_bin_counts"], geodesic["area_pair_bin_counts"])
+    assert int(np.sum(geodesic["global_bin_counts"])) == 12
+    assert geodesic["global_bin_counts"][2] == 6
+    assert geodesic["global_bin_counts"][4] == 4
+    assert geodesic["global_bin_counts"][6] == 2
+    probabilities = model.get_binned_area_probability_matrix(geodesic, 1.0)
+    assert np.isclose(np.sum(probabilities), 1.0, rtol=0, atol=1e-12)
+    monkeypatch.setattr(analysis, "PREPROCESSING_DIR", Path(tmp_path))
+    names, euclidean_mean, geodesic_mean = analysis.get_full_pair_area_distance_means("toy")
+    assert names.tolist() == ["A", "B"]
+    assert np.array_equal(euclidean_mean, geodesic_mean, equal_nan=True)
+
+
+def test_human_shortcut_uses_saved_full_pair_distances(monkeypatch, tmp_path):
+    vertices = np.asarray([[0, 0, 0], [2, 0, 0], [0, 2, 0]], dtype=float)
+    faces = np.asarray([[0, 1, 2]], dtype=np.int32)
+    area_ids = np.asarray([0, 0, 0], dtype=np.int16)
+    graph = preprocess.get_surface_graph(vertices, faces)
+    full_distance_dir = Path(tmp_path) / "full_pair_distances"
+    preprocess.build_full_distance_catalogs(
+        graph, vertices, area_ids, ["A"], full_distance_dir, bin_width=0.5,
+        worker_count=1, source_chunk_size=2, dijkstra_batch_size=1,
+    )
+    monkeypatch.setattr(
+        preprocess, "get_human_surface_data",
+        lambda: (vertices, faces, area_ids, ["A"]),
+    )
+    output_dir = Path(tmp_path) / "shortcut"
+    metadata = preprocess.build_human_shortcut_cache(full_distance_dir, output_dir)
+    resumed = preprocess.build_human_shortcut_cache(full_distance_dir, output_dir)
+    assert resumed == metadata
+    assert metadata["shortcut_euclidean_mm"] >= 2.0
+    assert metadata["shortcut_geodesic_mm"] >= metadata["shortcut_euclidean_mm"]
+    assert (output_dir / "shortcut_path_indices.npy").exists()
 
 
 def test_binned_rmae_uses_shared_ratio_bins(monkeypatch):

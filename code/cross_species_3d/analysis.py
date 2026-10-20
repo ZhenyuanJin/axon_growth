@@ -96,28 +96,49 @@ def load_seed_comparison_matrices(animal, dataset_key):
     return data, model_2d, model_3d
 
 
+def get_full_pair_area_distance_means(dataset_name):
+    """Return full-pair area means from fixed-width distance catalogs."""
+    root = PREPROCESSING_DIR / dataset_name / "full_pair_distances"
+    means = {}
+    names = None
+    for metric in ["euclidean", "geodesic"]:
+        catalog_dir = root / f"{metric}_catalog"
+        metadata = load_json(catalog_dir / "metadata.json")
+        local_names = np.asarray(metadata["area_names"])
+        if names is not None and not np.array_equal(names, local_names):
+            raise ValueError(f"Euclidean/geodesic area names differ for {dataset_name}.")
+        names = local_names
+        edges = np.load(catalog_dir / "bin_edges.npy", mmap_mode="r")
+        counts = np.load(catalog_dir / "area_pair_bin_counts.npy", mmap_mode="r")
+        centers = (edges[:-1] + edges[1:]) / 2
+        pair_counts = np.sum(counts, axis=0, dtype=np.uint64)
+        distance_sums = np.tensordot(centers, counts, axes=(0, 0))
+        means[metric] = np.divide(
+            distance_sums, pair_counts, out=np.full(distance_sums.shape, np.nan), where=pair_counts > 0
+        )
+    return names, means["euclidean"], means["geodesic"]
+
+
 def get_human_pair_table():
-    """Return one row per unordered human area pair with its physical ratio."""
-    cache_dir = PREPROCESSING_DIR / "human_lariviere" / "geodesic"
-    metadata = load_json(cache_dir / "metadata.json")
-    pair_counts = np.load(cache_dir / "pair_counts.npy", mmap_mode="r")
-    sum_euclidean = np.load(cache_dir / "sum_euclidean.npy", mmap_mode="r")
-    sum_geodesic = np.load(cache_dir / "sum_geodesic.npy", mmap_mode="r")
-    names = np.asarray(metadata["area_names"])
+    """Return full-vertex human area-pair geodesic/Euclidean ratios."""
+    names, euclidean_mean, geodesic_mean = get_full_pair_area_distance_means("human_lariviere")
     row, column = np.triu_indices(len(names), k=1)
-    ratio = sum_geodesic[row, column] / sum_euclidean[row, column]
-    if np.any(pair_counts[row, column] <= 0) or np.any(~np.isfinite(ratio)) or np.any(ratio < 1):
+    ratio = geodesic_mean[row, column] / euclidean_mean[row, column]
+    if np.any(~np.isfinite(ratio)) or np.any(ratio < 1):
         raise ValueError("Invalid human geodesic-to-Euclidean area-pair ratios.")
     return pd.DataFrame({"source_area": names[row], "target_area": names[column], "geodesic_to_euclidean_ratio": ratio})
 
 
 def get_macaque_pair_table():
-    """Return directed macaque comparison pairs and physical distance ratios."""
-    cache_dir = PREPROCESSING_DIR / "macaque_markov40" / "geodesic"
-    metadata = load_json(cache_dir / "metadata.json")
-    ratio = np.load(cache_dir / "geodesic_mean.npy") / np.load(cache_dir / "euclidean_mean.npy")
-    row_names = np.asarray(metadata["source_names"])
-    column_names = np.asarray(metadata["target_names"])
+    """Return full-voxel macaque comparison pairs and physical distance ratios."""
+    names, euclidean_mean, geodesic_mean = get_full_pair_area_distance_means("macaque_markov40")
+    info = uf.AnimalInfo("macaque", "markov40")
+    lookup = {name: index for index, name in enumerate(names)}
+    row_names = np.asarray(info.source_name)
+    column_names = np.asarray(info.target_name)
+    row_ids = np.asarray([lookup[name] for name in row_names])[:, np.newaxis]
+    column_ids = np.asarray([lookup[name] for name in column_names])[np.newaxis, :]
+    ratio = geodesic_mean[row_ids, column_ids] / euclidean_mean[row_ids, column_ids]
     row, column = np.indices(ratio.shape)
     selected = row_names[:, None] != column_names[None, :]
     return pd.DataFrame({
@@ -188,8 +209,8 @@ def get_native_distance_distribution(dataset_name):
         catalog = model.load_human_bin_catalog(cache_dir)
         edges = np.asarray(catalog["bin_edges"])
         distances = (edges[:-1] + edges[1:]) / 2
-        target = model.get_human_bin_probabilities(catalog, Lambda)
-        pair_weights = model.get_human_pair_bin_weights(catalog, Lambda)
+        target = model.get_binned_distance_probabilities(catalog, Lambda)
+        pair_weights = model.get_binned_pair_weights(catalog, Lambda)
         represented = pair_weights * np.asarray(catalog["global_bin_counts"])
     else:
         catalog = model.load_displacement_catalog(cache_dir)
@@ -268,6 +289,28 @@ def plot_correlation_bar(summary, output_path):
     cf.save_fig(fig, str(output_path), formats=["png", "pdf"], pkl=False)
 
 
+def plot_distance_metric_correlation_bar(summary, output_path):
+    """Plot optimal Euclidean and geodesic EDR correlations with seed errors."""
+    figure_data = summary.copy()
+    figure_data["species"] = figure_data["animal"].str.capitalize()
+    grouped = figure_data.groupby(["species", "distance_metric"])["correlation"].agg(["mean", "std"])
+    species_order = ["Macaque", "Human"]
+    x = np.arange(len(species_order), dtype=np.float64)
+    width = 0.36
+    euclidean_mean = grouped.loc[(species_order, "euclidean"), "mean"].to_numpy()
+    geodesic_mean = grouped.loc[(species_order, "geodesic"), "mean"].to_numpy()
+    euclidean_std = grouped.loc[(species_order, "euclidean"), "std"].to_numpy()
+    geodesic_std = grouped.loc[(species_order, "geodesic"), "std"].to_numpy()
+    fig, ax = cf.get_fig_ax()
+    cf.plt_bar(ax, x - width / 2, euclidean_mean, label="Euclidean", color=cf.BLUE, err=euclidean_std, width=width)
+    cf.plt_bar(ax, x + width / 2, geodesic_mean, label="Geodesic", color=cf.ORANGE, err=geodesic_std, width=width)
+    cf.set_ax(
+        ax, xlabel="", ylabel="Pearson correlation", xtick=x, xtick_label=species_order,
+        legend_loc="lower center", bbox_to_anchor=(0.5, 1.0), legend_kwargs={"ncols": 2},
+    )
+    cf.save_fig(fig, str(output_path), formats=["png", "pdf"], pkl=False)
+
+
 def _plot_finite_segments(ax, x, y, label, **kwargs):
     finite = np.isfinite(y)
     starts = np.flatnonzero(finite & ~np.r_[False, finite[:-1]])
@@ -310,7 +353,7 @@ def plot_distance_distribution_validation(validation, output_path):
 
 def plot_human_shortcut(output_path):
     """Plot one real human surface geodesic and its Euclidean shortcut."""
-    cache_dir = PREPROCESSING_DIR / "human_lariviere" / "geodesic"
+    cache_dir = PREPROCESSING_DIR / "human_lariviere" / "shortcut"
     vertices = np.load(cache_dir / "surface_vertices.npy")
     faces = np.load(cache_dir / "surface_faces.npy")
     path = np.load(cache_dir / "shortcut_path_indices.npy")
@@ -352,7 +395,7 @@ def plot_human_shortcut(output_path):
 
 
 def main():
-    """Create the three final cross-species 3D figures and numerical tables."""
+    """Create the final cross-species 3D figures and numerical tables."""
     ANALYSIS_DIR.mkdir(parents=True, exist_ok=True)
     FIGURES_DIR.mkdir(parents=True, exist_ok=True)
     correlations = pd.read_csv(MODELS_DIR / "optimal_seed_correlations.csv")
@@ -384,6 +427,14 @@ def main():
         distance_validation, FIGURES_DIR / "connection_distance_distribution_validation"
     )
     plot_human_shortcut(FIGURES_DIR / "human_euclidean_shortcut")
+    metric_path = MODELS_DIR / "distance_metric_comparison" / "optimal_seed_correlations.csv"
+    if not metric_path.exists():
+        raise FileNotFoundError(f"Run model.py first. Missing: {metric_path}")
+    metric_correlations = pd.read_csv(metric_path)
+    metric_correlations.to_csv(ANALYSIS_DIR / "distance_metric_optimal_seed_correlations.csv", index=False)
+    plot_distance_metric_correlation_bar(
+        metric_correlations, FIGURES_DIR / "euclidean_geodesic_correlation_bar"
+    )
 
 
 if __name__ == "__main__":
