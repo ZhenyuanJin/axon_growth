@@ -1,3 +1,5 @@
+import types
+
 import numpy as np
 import pandas as pd
 from utils_function import utils_function as uf
@@ -52,3 +54,25 @@ def test_removed_connections_use_explicit_logged_floor():
     expected = pd.DataFrame([[1.2, 0.9], [0.9, 4.5]])
     assert result.equals(expected)
     assert connection_matrix.iloc[0, 1] == 2.3
+
+
+def test_model_relative_error_passes_data_before_model(monkeypatch):
+    data = pd.DataFrame([[0.0, 1.0], [1.0, 0.0]])
+    generated = pd.DataFrame([[0.0, 2.0], [2.0, 0.0]])
+    expected = pd.DataFrame([[np.nan, 0.5], [0.5, np.nan]])
+    model = uf.ConnectionGenerationModel()
+    model.animal = "human"
+    model.dataset_key = "lariviere"
+    model.animal_info = types.SimpleNamespace(SC_data=data)
+    monkeypatch.setattr(model, "get_suitable_SC_model_masked_as_data", lambda: generated)
+
+    def get_relative_error(SC_data, SC_model, animal, dataset_key, diagonal=False):
+        assert SC_data is data
+        assert SC_model is generated
+        assert animal == "human"
+        assert dataset_key == "lariviere"
+        assert diagonal is False
+        return expected
+
+    monkeypatch.setattr(uf, "data_model_relative_error", get_relative_error)
+    assert model.get_relative_error().equals(expected)

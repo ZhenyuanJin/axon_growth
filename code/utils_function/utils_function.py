@@ -1529,7 +1529,7 @@ class ConnectionGenerationModel(ConnectionModel):
         else:
             SC_model = self.get_suitable_SC_model_masked_as_data()
             SC_data = self.animal_info.SC_data
-            return data_model_relative_error(SC_model, SC_data, self.animal, self.dataset_key, diagonal=diagonal)
+            return data_model_relative_error(SC_data, SC_model, self.animal, self.dataset_key, diagonal=diagonal)
 
 
 def get_connection_generation_results(config, output_dir, worker_count=None, force_run=False):
