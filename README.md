@@ -38,6 +38,7 @@ Set a specific interpreter when needed, for example `make test PYTHON=/path/to/p
 - `code/result_analysis/`: parameter-search result analysis.
 - `code/visualization/`: functional plotting helpers, the `PaperFig` orchestrator, and figure generation.
 - `code/data_analysis/`: additional data-analysis workflows converted from the former notebooks.
+- `code/target_conditioned_angle_edr/`: five-repeat cross-species direction and EDR benchmark, metric evaluation, plotting, and validation.
 - `Makefile`: supported repository-root commands; it exposes local code without installing a package.
 
 All workflow data and output paths are resolved from each script's location rather than the current working directory.
@@ -49,3 +50,21 @@ Processed inputs are stored in `data/`; source datasets are stored in `raw_data/
 Each model run contains a configuration manifest, NumPy simulation arrays, CSV connection matrices, scalar metrics, and optional check figures. Output directories use a deterministic configuration hash rather than a timestamp.
 
 The comparison models retain their previous calculations but are not used to generate the paper figures. The repository contains no notebook execution path.
+
+The isolated five-repeat target-conditioned angle benchmark uses the original
+connection-samples-to-SC pipeline for all five datasets:
+
+```bash
+PYTHONPATH=code OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 MPLBACKEND=Agg python code/target_conditioned_angle_edr/run_experiment.py
+```
+
+See [experiment instructions](code/target_conditioned_angle_edr/README.md)
+for parameters, output paths, and metric definitions.
+
+Evaluate saved SC matrices and generate correlation figures with:
+
+```bash
+PYTHONPATH=code python code/target_conditioned_angle_edr/evaluate_results.py
+PYTHONPATH=code python code/visualization/run_correlation_figures.py
+PYTHONPATH=code python code/cross_species_3d/evaluate_models.py
+```

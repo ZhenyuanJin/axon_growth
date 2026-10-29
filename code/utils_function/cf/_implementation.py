@@ -1543,9 +1543,18 @@ def get_rectangle_matrix_corr(matrix_x, matrix_y, diagonal=True, get_corr_kwargs
     return get_corr(matrix_x_flat, matrix_y_flat, **get_corr_kwargs)
 
 def get_pd_rectangle_corr(df_x, df_y, diagonal=True, get_corr_kwargs=None):
-    df_x_aligned = align_df_row_col_order(df_x)
-    df_y_aligned = align_df_row_col_order(df_y)
-    return get_rectangle_matrix_corr(df_x_aligned.values, df_y_aligned.values, diagonal=diagonal, get_corr_kwargs=get_corr_kwargs)
+    """Return Pearson correlation for aligned DataFrames, excluding matching row/column labels if requested."""
+    if not all(frame.index.is_unique and frame.columns.is_unique for frame in [df_x, df_y]):
+        raise ValueError('Correlation matrices must have unique row and column labels.')
+    if (df_x.shape != df_y.shape or not df_x.index.isin(df_y.index).all()
+            or not df_x.columns.isin(df_y.columns).all()):
+        raise ValueError('Correlation matrices must contain the same row and column labels.')
+    aligned_y = df_y.reindex(index=df_x.index, columns=df_x.columns)
+    mask = np.ones(df_x.shape, dtype=bool) if diagonal else (
+        df_x.index.to_numpy()[:, None] != df_x.columns.to_numpy()[None, :]
+    )
+    get_corr_kwargs = {} if get_corr_kwargs is None else get_corr_kwargs
+    return get_corr(df_x.to_numpy()[mask], aligned_y.to_numpy()[mask], **get_corr_kwargs)
 
 def get_linregress(x, y, nan_policy='drop', fill_value=None, inf_policy=INF_POLICY, sync=True, verbose=False):
     x, y = sync_special_value(x, y, inf_policy=inf_policy, verbose=verbose) if sync else (x, y)

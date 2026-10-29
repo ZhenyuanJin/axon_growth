@@ -15,7 +15,8 @@ def get_run_dir(animal, dataset_key):
     return OUTPUT_DIR / "connection_generation" / dataset_name / get_config_hash(config)
 
 
-def main():
+def get_figure_generator():
+    """Load saved model matrices and return the paper figure generator."""
     run_dir_by_dataset = {
         f"{animal}_{dataset_key}": get_run_dir(animal, dataset_key)
         for animal, dataset_key in DATASETS
@@ -32,11 +33,15 @@ def main():
         run_dir_by_dataset["macaque_markov40"],
         run_dir_by_dataset["human_lariviere"],
     ]
-    figures = PaperFig(
+    return PaperFig(
         model_timedir_list=[str(path) for path in model_run_dirs],
         marmoset_V4_timedir=str(run_dir_by_dataset["marmoset_V4"]),
         output_dir=FIGURE_DIR,
     )
+
+
+def main():
+    figures = get_figure_generator()
     figures.plot_all()
     figures.table_1()
     print(f"Figures saved to {FIGURE_DIR}")

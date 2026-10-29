@@ -1,9 +1,0 @@
-direction_method,metric,objective,Lambda,value
-random,correlation,max,2.0,0.7690970611946872
-random,log_correlation,max,0.75,0.5442688531244603
-random,rmae_both,min,0.75,0.4087513585610764
-random,median_target_correlation,max,3.0,0.7937340850646656
-SC_angle_kde,correlation,max,2.5,0.8460083328671106
-SC_angle_kde,log_correlation,max,0.875,0.5685085991028845
-SC_angle_kde,rmae_both,min,0.75,0.3784051526762141
-SC_angle_kde,median_target_correlation,max,2.125,0.8778077143472118
