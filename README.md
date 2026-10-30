@@ -43,6 +43,12 @@ Set a specific interpreter when needed, for example `make test PYTHON=/path/to/p
 
 All workflow data and output paths are resolved from each script's location rather than the current working directory.
 
+Create one region-outline flatmap PNG per species in `results/flatmaps/`:
+
+```bash
+PYTHONPATH=code MPLBACKEND=Agg python code/visualization/run_flatmaps.py
+```
+
 ## Data and outputs
 
 Processed inputs are stored in `data/`; source datasets are stored in `raw_data/`. Generated outputs are placed in `results/`, which is ignored by Git.
