@@ -19,7 +19,15 @@ make connection-generation
 make paper-figures
 ```
 
-The first command runs the primary model for mouse, marmoset, macaque, human, and the marmoset V4 dataset. Results are written under `results/models/`. The second command creates the 16 main and supplementary figures under `results/figures/` in PDF and PNG formats.
+The first command runs the primary model for mouse, marmoset, macaque, human, and the marmoset V4 dataset. Results are written under `results/models/`. The second command creates the 17 main and supplementary figures under `results/figures/` in PDF and PNG formats.
+
+Generate only the horizontal MBM V4 data, model, and accuracy figure with:
+
+```bash
+PYTHONPATH=code MPLBACKEND=Agg python code/visualization/run_paper_figures.py --figure marmoset_mbm_connectivity_fit
+```
+
+The performance panel includes a correlation bar and four accuracy bars using the same connection-strength categories and `1 - RMAE` metric as the cross-species connectivity figure. Metrics are saved beside the figure.
 
 Parameter searches and their summary are run with:
 

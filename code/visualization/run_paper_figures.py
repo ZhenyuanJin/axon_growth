@@ -1,3 +1,4 @@
+import argparse
 from pathlib import Path
 
 from simulation.run_connection_generation import DATASETS, OUTPUT_DIR, get_run_config
@@ -41,9 +42,20 @@ def get_figure_generator():
 
 
 def main():
+    parser = argparse.ArgumentParser(description='Generate paper figures from saved model results.')
+    parser.add_argument(
+        '--figure', nargs='+',
+        choices=sorted(name[5:] for name in dir(PaperFig) if name.startswith('plot_') and name != 'plot_all'),
+        help='Generate only the selected figures; omit to generate all figures and the summary table.',
+    )
+    args = parser.parse_args()
     figures = get_figure_generator()
-    figures.plot_all()
-    figures.table_1()
+    if args.figure:
+        for name in args.figure:
+            getattr(figures, f'plot_{name}')()
+    else:
+        figures.plot_all()
+        figures.table_1()
     print(f"Figures saved to {FIGURE_DIR}")
 
 

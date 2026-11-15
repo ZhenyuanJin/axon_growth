@@ -339,6 +339,7 @@ class PaperFig:
             self.plot_distance_2d_3d_and_edr,
             self.plot_angle_distance_dependence,
             self.plot_marmoset_atlas_comparison,
+            self.plot_marmoset_mbm_connectivity_fit,
             self.plot_connection_statistics_other_species,
             self.plot_marmoset_area_performance_and_retrograde,
             self.plot_area_performance_all_species,
@@ -634,6 +635,36 @@ class PaperFig:
         cf.add_axes_title(axes[:, 1], title='MBM V4', title_size=cf.SUP_TITLE_SIZE)
         cf.add_axes_list_tag_by_order(axes.flatten().tolist())
         cf.save_fig(fig, self.figdir + '/marmoset_atlas_comparison', **self.save_fig_kwargs)
+
+    def plot_marmoset_mbm_connectivity_fit(self):
+        """Plot MBM V4 data, model, correlation, and accuracy in one row."""
+        name = 'marmoset_V4'
+        animal_info = self.animal_info_by_name[name]
+        data_matrix = self.data_matrix_by_name[name]
+        model_matrix = self.masked_model_matrix_by_name[name]
+        fig, axes = cf.get_fig_ax(nrows=1, ncols=3)
+        plot_data_model_connection_matrices(
+            axes[0], axes[1], data_matrix, self.model_matrix_by_name[name],
+            animal_info.animal, animal_info.dataset_key, show_correlation=False,
+        )
+        performance = uf.get_performance_dict(
+            SC_data=data_matrix, SC_model=model_matrix,
+            animal=animal_info.animal, dataset_key=animal_info.dataset_key,
+            diagonal=False,
+        )
+        categories = ['strong', 'medium_strong', 'weak_medium', 'weak']
+        scores = {'corr': performance['correlation']}
+        scores.update({category: performance['accuracy_' + category] for category in categories})
+        colors = [cf.BLUE] + list(cf.CMAP(np.linspace(0, 1, len(categories))))
+        cf.plt_group_bar_dict(axes[2], {'MBM V4': scores}, colors=colors, inner_gap=0.5)
+        cf.set_ax(
+            axes[2], title='Performance', ylabel='Performance', ylim=[0, 1],
+            legend_loc='upper left', bbox_to_anchor=(1, 1),
+        )
+        cf.add_axes_list_tag_by_order(axes.tolist())
+        cf.add_axes_title(axes, title='MBM V4')
+        cf.save_fig(fig, self.figdir + '/marmoset_mbm_connectivity_fit', **self.save_fig_kwargs)
+        cf.save_dict(performance, self.figdir + '/marmoset_mbm_connectivity_fit_metrics')
 
     def plot_connection_statistics_other_species(self):
         names = [name for name in self.dataset_name_list if name != 'marmoset_majka']

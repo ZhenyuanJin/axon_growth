@@ -8,6 +8,7 @@ FIGURE_NAMES = [
     "long_range_connection_analysis",
     "cross_species_scaling",
     "marmoset_atlas_comparison",
+    "marmoset_mbm_connectivity_fit",
     "marmoset_area_performance_and_retrograde",
     "area_performance_all_species",
     "direction_preference_performance",
