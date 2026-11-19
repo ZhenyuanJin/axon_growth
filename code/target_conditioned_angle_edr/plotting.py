@@ -21,6 +21,62 @@ def get_angle_density(angle_grid, centers, weights, bandwidth_degrees):
     return density / density.max()
 
 
+def plot_angle_kernel_schematic(output_dir):
+    """Illustrate the configured circular kernel and a synthetic weighted mixture."""
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    bandwidth = parameters.ANGLE_KDE_BANDWIDTH_DEGREES
+    concentration = 1.0 / np.radians(bandwidth) ** 2
+    grid = np.linspace(-np.pi, np.pi, 1441)
+    degrees = np.degrees(grid)
+    single = get_angle_density(grid, np.array([0.0]), np.ones(1), bandwidth)
+    boundary = get_angle_density(grid, np.radians([170.0]), np.ones(1), bandwidth)
+    centers = np.radians([-65.0, -25.0, 170.0])
+    weights = np.array([0.5, 0.3, 0.2])
+    kernels = np.exp(concentration * (np.cos(grid[:, None] - centers) - 1))
+    kernels /= 2 * np.pi * scipy.special.i0e(concentration)
+    contributions = kernels * weights
+    mixture = contributions.sum(axis=1)
+    contributions /= mixture.max()
+    mixture = get_angle_density(grid, centers, weights, bandwidth)
+
+    fig, axes = cf.get_fig_ax(ncols=3)
+    cf.plt_line(axes[0], degrees, single, color=cf.BLUE,
+                label=f"$h$ = {bandwidth:g} degrees\n" + rf"$\kappa = {concentration:.2f}$")
+    cf.set_ax(axes[0], title="A. Single kernel\nCentered at 0 degrees",
+              xlabel="Angular offset (degree)", ylabel="Peak-normalized kernel",
+              xlim=[-60, 60], ylim=[0, 1.1], xtick=[-60, -30, 0, 30, 60],
+              legend_loc="upper center", bbox_to_anchor=(0.5, -0.3),
+              legend_kwargs={"frameon": False})
+
+    cf.plt_line(axes[1], degrees, boundary, color=cf.ORANGE,
+                label="Same kernel at 170 degrees\n-180 and +180 are identical")
+    cf.plt_scatter(axes[1], [-180, 180], boundary[[0, -1]], color=cf.ORANGE)
+    cf.set_ax(axes[1], title="B. Circular boundary\nContinuous across the cut",
+              xlabel="Target-to-source angle\n(degree)", ylabel="Peak-normalized kernel",
+              xlim=[-180, 180], ylim=[0, 1.1], xtick=[-180, -90, 0, 90, 180],
+              legend_loc="upper center", bbox_to_anchor=(0.5, -0.3),
+              legend_kwargs={"frameon": False})
+
+    for index, color in enumerate([cf.BLUE, cf.GREEN, cf.ORANGE]):
+        cf.plt_line(axes[2], degrees, contributions[:, index], color=color, linestyle="--",
+                    label=f"{np.degrees(centers[index]):g} degrees, weight {weights[index]:g}")
+    cf.plt_line(axes[2], degrees, mixture, color=cf.RED, label="Weighted sum (KDE)")
+    cf.set_ax(axes[2], title="C. Weighted mixture\nIllustrative centers and weights",
+              xlabel="Target-to-source angle\n(degree)", ylabel="Peak-normalized density",
+              xlim=[-180, 180], ylim=[0, 1.1], xtick=[-180, -90, 0, 90, 180],
+              legend_loc="upper center", bbox_to_anchor=(0.5, -0.3),
+              legend_kwargs={"frameon": False})
+    cf.save_fig(fig, str(output_dir / "angle_kde_kernel"), formats=["png", "pdf"],
+                pkl=False, bbox_inches="tight")
+    np.savetxt(output_dir / "angle_kde_kernel.csv",
+               np.column_stack([degrees, single, boundary, contributions, mixture]),
+               delimiter=",", comments="",
+               header="angle_degrees,single_peak_normalized,boundary_peak_normalized,"
+                      "weighted_component_1,weighted_component_2,weighted_component_3,"
+                      "mixture_peak_normalized")
+
+
 def plot_angle_distribution(ax, target, grid, density):
     """Draw one precomputed KDE curve without empirical scatter or an obstructing legend."""
     cf.plt_line(ax, np.degrees(grid), density, color=cf.RED)
@@ -96,3 +152,27 @@ def plot_metric_scans(scan, output_dir, matrix_label):
         plot_scan_metric(ax, scan, metric, label)
     cf.save_fig(fig, str(Path(output_dir) / "metric_scans"), formats=["png", "pdf"],
                 pkl=False, bbox_inches="tight")
+
+
+def plot_cross_species_target_correlations(comparisons, output_dir):
+    """Plot four species horizontally using saved target means and sample SD."""
+    fig, axes = cf.get_fig_ax(ncols=4)
+    for ax, animal in zip(axes, ["mouse", "marmoset", "macaque", "human"]):
+        comparison = comparisons[animal]
+        x = comparison.correlation_random_mean.to_numpy()
+        y = comparison.correlation_SC_angle_kde_mean.to_numpy()
+        xsd = comparison.correlation_random_std.to_numpy()
+        ysd = comparison.correlation_SC_angle_kde_std.to_numpy()
+        lower = max(-1.05, min(np.min(x - xsd), np.min(y - ysd)) - 0.06)
+        upper = min(1.06, max(np.max(x + xsd), np.max(y + ysd)) + 0.06)
+        cf.plt_line(ax, [lower, upper], [lower, upper], color=cf.GRAY, linestyle="--")
+        cf.add_errorbar(ax, x, y, ysd, xerr=xsd, fmt="none", color=cf.GRAY, alpha=0.35)
+        # The requested larger points apply only to this four-species figure.
+        cf.plt_scatter(ax, x, y, color=cf.BLUE, s=90, edgecolors=cf.WHITE,
+                       linewidths=None, zorder=3)
+        cf.set_ax(ax, title=animal.capitalize(), xlabel="uniform",
+                  ylabel="SC angle KDE", text_process={"capitalize": False}, legend=False,
+                  xlim=[lower, upper], ylim=[lower, upper])
+        ax.set_aspect("equal", adjustable="box")
+    cf.save_fig(fig, str(Path(output_dir) / "cross_species_target_correlations"),
+                formats=["png", "pdf"], pkl=False, bbox_inches="tight")

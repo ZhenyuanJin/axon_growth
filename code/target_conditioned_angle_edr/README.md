@@ -36,6 +36,43 @@ Only direction sampling differs between the methods:
   centroid, weighted by empirical `SC[source, target]` times the source and
   target component area fractions. Pair weights conserve each area's weight.
 
+### Angle KDE kernel schematic
+
+The circular kernel is the von Mises density,
+
+$$
+K(\theta;\mu,\kappa) = \frac{\exp[\kappa\cos(\theta-\mu)]}{2\pi I_0(\kappa)},
+\qquad \kappa = h^{-2}, \quad h = 15\pi/180 \approx 0.2618,
+$$
+
+where `I_0` is the modified Bessel function of the first kind of order zero.
+The 15-degree bandwidth gives `kappa = 14.59025`; it is an approximate angular
+standard deviation, rather than a hard angular cutoff. The target-specific
+mixture is `p(theta | target) = sum_j w_j K(theta; mu_j, kappa)`, using the
+normalized component-pair weights described above. Kernels are periodic, so a
+peak near +180 degrees continues across -180 degrees.
+
+![Angle KDE kernel schematic](../../../results/experiments/target_conditioned_angle_edr/schematics/angle_kde_kernel.png)
+
+The three panels show a single kernel, its continuity across the angle boundary,
+and a weighted mixture. Panel C uses illustrative centers (-65, -25, and 170
+degrees) and weights (0.5, 0.3, and 0.2), rather than an empirical target.
+For display, each single kernel is divided by its peak. All weighted components
+in panel C share the mixture's peak as their denominator, so the dashed curves
+sum to the red KDE curve. Sampling uses the probability density, without this
+display normalization.
+
+Generate only this schematic from the repository root:
+
+```bash
+PYTHONPATH=code MPLBACKEND=Agg python code/target_conditioned_angle_edr/plot_kernel_schematic.py
+```
+
+PNG, PDF, and numeric CSV outputs are saved under
+`results/experiments/target_conditioned_angle_edr/schematics/`. As with the other
+generated results, these files are ignored by Git; the entry point reproduces
+them. `plot_saved_results.py` also regenerates the schematic.
+
 Target points are sampled uniformly within an area, allocating its components
 by area. Self-connections and source points outside the annotated cortex are
 rejected. Overlapping source polygons use dictionary insertion order to select
@@ -66,6 +103,12 @@ are explicitly flagged. Other metric optima are restricted to the tested grid.
 
 Outputs live in `results/experiments/target_conditioned_angle_edr/`:
 
+- `schematics/`: shared angle KDE kernel illustration in PNG/PDF and numeric CSV.
+- `figures/cross_species_target_correlations.png` and `.pdf`: one horizontal
+  four-panel target-correlation figure for mouse Gamanut, marmoset Majka,
+  macaque Markov40, and human Lariviere. Points show five-repeat means, error
+  bars show sample SD, and the dashed line is equality. This figure uses larger
+  points as requested; the remaining plotting defaults are unchanged.
 - `<dataset>/angle_distributions/`: KDE-only PNG/PDF for every measured target,
   plus numeric densities. Angles are empirical and do not require repeated runs.
 - `<dataset>/figures/`: correlation comparison and other metric scans, with
@@ -90,6 +133,12 @@ python code/target_conditioned_angle_edr/plot_saved_results.py
 python code/target_conditioned_angle_edr/evaluate_results.py
 python code/target_conditioned_angle_edr/validate_results.py
 python -m pytest -q tests/test_target_conditioned_angle_edr.py
+```
+
+Generate only the horizontal four-species target-correlation figure:
+
+```bash
+PYTHONPATH=code MPLBACKEND=Agg python code/target_conditioned_angle_edr/plot_cross_species_target_correlations.py
 ```
 
 Interpretation:

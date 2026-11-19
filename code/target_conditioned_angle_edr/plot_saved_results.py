@@ -6,6 +6,7 @@ from target_conditioned_angle_edr import plotting
 
 
 def main():
+    plotting.plot_angle_kernel_schematic(parameters.OUTPUT_DIR / "schematics")
     for animal, key in parameters.DATASETS:
         output_dir = parameters.OUTPUT_DIR / f"{animal}_{key}"
         metadata_path = output_dir / "metadata.json"
