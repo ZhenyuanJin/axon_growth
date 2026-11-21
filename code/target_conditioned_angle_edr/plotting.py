@@ -174,5 +174,6 @@ def plot_cross_species_target_correlations(comparisons, output_dir):
                   ylabel="SC angle KDE", text_process={"capitalize": False}, legend=False,
                   xlim=[lower, upper], ylim=[lower, upper])
         ax.set_aspect("equal", adjustable="box")
+    cf.add_axes_list_tag_by_order(axes, ref_ax=axes[0])
     cf.save_fig(fig, str(Path(output_dir) / "cross_species_target_correlations"),
                 formats=["png", "pdf"], pkl=False, bbox_inches="tight")
